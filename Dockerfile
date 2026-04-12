@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/app ./app
 COPY backend/villes_france.csv ./villes_france.csv
+COPY frontend/dashboard.html ./static/dashboard.html
 
 EXPOSE 8000
 
