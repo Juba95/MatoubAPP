@@ -5,7 +5,7 @@ from app.database import get_db
 from app.auth import get_current_user
 from app.models.site import Site
 from app.models.page import Page, PageStatus
-from app.models.action import Action, ActionStatus
+from app.models.action import Action, ActionStatus, ActionType
 
 router = APIRouter(prefix="/overview", tags=["overview"], dependencies=[Depends(get_current_user)])
 
@@ -45,4 +45,55 @@ def get_overview(db: Session = Depends(get_db)):
         "pending_actions": pending_actions or 0,
         "pending_optimizations": optimize_count or 0,
         "pending_creations": create_count or 0,
+    }
+
+
+@router.get("/budget")
+def get_budget(db: Session = Depends(get_db)):
+    """Suivi des coûts API en temps réel (DataForSEO + Claude)"""
+    # Coût réel (actions terminées)
+    actual_total = db.query(sqlfunc.sum(Action.actual_api_cost)).filter(
+        Action.status == ActionStatus.DONE,
+        Action.actual_api_cost.isnot(None),
+    ).scalar() or 0
+
+    # Coût estimé restant (actions en attente / en cours)
+    estimated_pending = db.query(sqlfunc.sum(Action.estimated_api_cost)).filter(
+        Action.status.in_([ActionStatus.PENDING, ActionStatus.VALIDATED, ActionStatus.EXECUTING]),
+    ).scalar() or 0
+
+    # Détail par type
+    geoloc_spent = db.query(sqlfunc.sum(Action.actual_api_cost)).filter(
+        Action.status == ActionStatus.DONE,
+        Action.action_type == ActionType.GEOLOC,
+        Action.actual_api_cost.isnot(None),
+    ).scalar() or 0
+
+    content_spent = db.query(sqlfunc.sum(Action.actual_api_cost)).filter(
+        Action.status == ActionStatus.DONE,
+        Action.action_type == ActionType.CREATE,
+        Action.actual_api_cost.isnot(None),
+    ).scalar() or 0
+
+    optimize_spent = db.query(sqlfunc.sum(Action.actual_api_cost)).filter(
+        Action.status == ActionStatus.DONE,
+        Action.action_type == ActionType.OPTIMIZE,
+        Action.actual_api_cost.isnot(None),
+    ).scalar() or 0
+
+    actions_done = db.query(sqlfunc.count(Action.id)).filter(
+        Action.status == ActionStatus.DONE
+    ).scalar() or 0
+
+    return {
+        "actual_spent_eur": round(actual_total, 4),
+        "estimated_pending_eur": round(estimated_pending, 2),
+        "projected_total_eur": round(actual_total + estimated_pending, 2),
+        "breakdown": {
+            "geoloc_eur": round(geoloc_spent, 4),
+            "content_eur": round(content_spent, 4),
+            "optimize_eur": round(optimize_spent, 4),
+        },
+        "actions_done": actions_done,
+        "avg_cost_per_action_eur": round(actual_total / actions_done, 5) if actions_done else 0,
     }

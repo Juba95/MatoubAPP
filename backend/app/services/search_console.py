@@ -11,41 +11,53 @@ class SearchConsoleClient:
     API_URL = "https://www.googleapis.com/webmasters/v3"
     SEARCHANALYTICS_URL = "https://searchconsole.googleapis.com/webmasters/v3"
 
-    def __init__(self, site: Site):
+    def __init__(self, site: Site, proxy_url: str | None = None):
         self.site_url = f"sc-domain:{site.domain}"
         self.token_data = json.loads(site.sc_token_json) if site.sc_token_json else None
+        self.proxy_url = proxy_url or None
 
     def _get_access_token(self) -> str:
         """Refresh le token OAuth"""
         if not self.token_data:
             raise ValueError("No Search Console token configured for this site")
-        resp = httpx.post(self.TOKEN_URL, data={
+        kwargs = {"data": {
             "client_id": self.token_data["client_id"],
             "client_secret": self.token_data["client_secret"],
             "refresh_token": self.token_data["refresh_token"],
             "grant_type": "refresh_token",
-        })
+        }}
+        if self.proxy_url:
+            kwargs["proxy"] = self.proxy_url
+        resp = httpx.post(self.TOKEN_URL, **kwargs)
         resp.raise_for_status()
         return resp.json()["access_token"]
 
     def _client(self):
         token = self._get_access_token()
-        return httpx.Client(
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=30,
-        )
+        kwargs = {
+            "headers": {"Authorization": f"Bearer {token}"},
+            "timeout": 30,
+        }
+        if self.proxy_url:
+            kwargs["proxy"] = self.proxy_url
+        return httpx.Client(**kwargs)
 
     def get_performance(
         self,
         days: int = 7,
         dimensions: list[str] | None = None,
         row_limit: int = 1000,
+        offset_days: int = 0,
     ) -> list:
-        """Récupère les données de performance Search Console"""
+        """Récupère les données de performance Search Console.
+
+        offset_days=0  → période courante  (J-10 → J-3)
+        offset_days=7  → période précédente (J-17 → J-10)
+        """
         if dimensions is None:
             dimensions = ["query", "page"]
 
-        end_date = datetime.now() - timedelta(days=3)  # SC a 3j de délai
+        end_date = datetime.now() - timedelta(days=3 + offset_days)  # SC a 3j de délai
         start_date = end_date - timedelta(days=days)
 
         payload = {

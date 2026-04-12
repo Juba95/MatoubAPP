@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from app.database import init_db
+from app.config import get_settings
 from app.routers import (
     auth_router,
     sites_router,
@@ -19,9 +20,11 @@ app = FastAPI(
     redoc_url=None,
 )
 
+_origins = [o.strip() for o in get_settings().allowed_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -27,8 +27,10 @@ class SEOAgent:
 
         try:
             sc = SearchConsoleClient(site)
+            # Période courante : J-10 → J-3 (délai SC de 3j)
             current_data = sc.get_performance(days=7, dimensions=["query", "page"])
-            previous_data = sc.get_performance(days=7, dimensions=["query", "page"])
+            # Période précédente : J-17 → J-10 (même durée, décalée de 7j)
+            previous_data = sc.get_performance(days=7, dimensions=["query", "page"], offset_days=7)
         except Exception as e:
             results["errors"].append(f"Search Console error: {str(e)}")
             return results

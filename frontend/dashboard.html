@@ -12,8 +12,8 @@
 body{background:var(--bg);color:var(--text);font-family:var(--body);min-height:100vh}
 .container{max-width:960px;margin:0 auto;padding:20px 16px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-bottom:12px}
-input,select{width:100%;padding:10px 12px;background:#1a1a28;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;font-family:var(--body);outline:none;box-sizing:border-box}
-input:focus,select:focus{border-color:var(--accent)}
+input,select,textarea{width:100%;padding:10px 12px;background:#1a1a28;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;font-family:var(--body);outline:none;box-sizing:border-box}
+input:focus,select:focus,textarea:focus{border-color:var(--accent)}
 .btn{padding:10px 20px;background:var(--accent);color:#0b0b12;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:var(--body)}
 .btn:hover{opacity:.9}
 .btn:disabled{opacity:.5;cursor:default}
@@ -34,7 +34,8 @@ label{font-size:12px;color:var(--muted);margin-bottom:4px;display:block;letter-s
 .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
 .tab:hover{color:var(--text)}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.site-row{display:flex;align-items:center;gap:12px;cursor:pointer}
+.site-row{display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none}
+.site-row:hover{border-color:var(--accent)!important}
 .site-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .site-stats{display:flex;gap:16px;font-size:12px;color:var(--muted);flex-shrink:0}
 .site-stats b{font-weight:500;color:var(--text)}
@@ -68,6 +69,9 @@ label{font-size:12px;color:var(--muted);margin-bottom:4px;display:block;letter-s
 .result-box{border-color:var(--success)}
 .result-msg{color:var(--success);font-weight:500}
 .result-sub{font-size:12px;color:var(--muted)}
+.cfg-panel{background:#0e0e1a;border:1px solid var(--border);border-top:none;border-radius:0 0 10px 10px;padding:20px;margin-top:-12px;margin-bottom:12px}
+.cfg-icon{font-size:16px;color:var(--muted);margin-left:8px;flex-shrink:0;transition:color .15s}
+.site-row:hover .cfg-icon{color:var(--accent)}
 </style>
 </head>
 <body>
@@ -111,6 +115,7 @@ label{font-size:12px;color:var(--muted);margin-bottom:4px;display:block;letter-s
 <script>
 const API='';
 let TOKEN=localStorage.getItem('pbn_token');
+let _openCfg=null; // id du site dont le panneau est ouvert
 
 async function apiFetch(path,opts={}){
 const h={'Content-Type':'application/json'};
@@ -156,6 +161,7 @@ if(n===3)loadSettings();
 
 // OVERVIEW
 async function loadOverview(){
+_openCfg=null;
 const[ov,sites,actions]=await Promise.all([apiFetch('/overview/'),apiFetch('/sites/'),apiFetch('/actions/')]);
 let h=`<div class="metrics">
 <div class="metric"><div class="metric-label">Sites actifs</div><div class="metric-val">${ov.total_sites}</div></div>
@@ -175,15 +181,27 @@ h+=`<div id="add-site-form" class="hidden"><div class="card grid2" style="gap:10
 </div></div>`;
 
 if(sites.length===0){h+=`<div class="card text-center" style="color:var(--muted)">Aucun site \u2014 clique "+ Ajouter"</div>`;}
-else{sites.forEach(si=>{
+else{
+sites.forEach(si=>{
 const col=si.position_delta>0?'var(--success)':si.position_delta<-3?'var(--danger)':'var(--warn)';
 const label=si.position_delta>0?'+'+si.position_delta:si.position_delta<-3?si.position_delta+' pos.':'Stable';
-h+=`<div class="card site-row">
+h+=`<div class="card site-row" id="site-row-${si.id}" onclick="toggleSiteConfig(${si.id})">
 <div class="site-dot" style="background:${col}"></div>
-<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:500">${si.name}</div><div style="font-size:11px;color:var(--muted)">${si.domain} \u2014 ${si.host_provider||'non config.'}</div></div>
-<div class="site-stats"><div><b>${si.total_pages}</b> pages</div><div><b>${si.avg_position||'\u2014'}</b> pos.</div></div>
+<div style="flex:1;min-width:0">
+<div style="font-size:14px;font-weight:500">${si.name}</div>
+<div style="font-size:11px;color:var(--muted)">${si.domain} \u2014 ${si.host_provider||'non config.'}</div>
+</div>
+<div class="site-stats">
+<div><b>${si.total_pages}</b> pages</div>
+<div><b>${si.avg_position||'\u2014'}</b> pos.</div>
+<div><b>${si.pending_actions}</b> actions</div>
+</div>
 ${pillHtml(label,col)}
-</div>`;});}
+<span class="cfg-icon" id="cfg-icon-${si.id}">\u2699\uFE0F</span>
+</div>
+<div id="site-cfg-${si.id}" class="hidden"></div>`;
+});
+}
 
 h+=`<div class="flex-between mt-24 mb-10"><div class="section-title">File de validation (${actions.length})</div>`;
 if(actions.length>0)h+=`<button class="btn2" onclick="validateAll([${actions.map(a=>a.id).join(',')}])">Tout valider</button>`;
@@ -215,6 +233,171 @@ loadOverview();
 async function validateAction(id){await apiFetch(`/actions/${id}/validate`,{method:'POST'});loadOverview();}
 async function rejectAction(id){await apiFetch(`/actions/${id}/reject`,{method:'POST'});loadOverview();}
 async function validateAll(ids){await apiFetch('/actions/validate-batch',{method:'POST',body:JSON.stringify(ids)});loadOverview();}
+
+// ─── PANNEAU CONFIG SITE ─────────────────────────────────────────────────────
+
+async function toggleSiteConfig(id){
+const panel=document.getElementById('site-cfg-'+id);
+const icon=document.getElementById('cfg-icon-'+id);
+const row=document.getElementById('site-row-'+id);
+
+// Fermer l'autre panneau si ouvert
+if(_openCfg && _openCfg!==id){
+const old=document.getElementById('site-cfg-'+_openCfg);
+if(old)old.classList.add('hidden');
+const oldIcon=document.getElementById('cfg-icon-'+_openCfg);
+if(oldIcon)oldIcon.style.transform='';
+const oldRow=document.getElementById('site-row-'+_openCfg);
+if(oldRow)oldRow.style.borderRadius='';
+}
+
+if(!panel.classList.contains('hidden')){
+// Fermer
+panel.classList.add('hidden');
+icon.style.transform='';
+row.style.borderRadius='';
+_openCfg=null;
+return;
+}
+
+// Ouvrir — arrondir uniquement le haut de la card
+row.style.borderRadius='10px 10px 0 0';
+row.style.marginBottom='0';
+icon.style.transform='rotate(30deg)';
+_openCfg=id;
+
+// Charger les données du site
+const si=await apiFetch('/sites/'+id);
+
+panel.innerHTML=`<div class="cfg-panel">
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+<button class="btn2 btn-sm" onclick="event.stopPropagation();testWP(${id})">&#x1F517; Tester WP</button>
+<button class="btn2 btn-sm" onclick="event.stopPropagation();scanSite(${id})">&#x1F50D; Scanner SEO</button>
+<button class="btn2 btn-sm btn-danger" onclick="event.stopPropagation();if(confirm('Désactiver ce site ?'))deleteSite(${id})">Désactiver</button>
+</div>
+<div id="cfg-msg-${id}" style="margin-bottom:10px;font-size:12px;min-height:16px"></div>
+
+<div class="accent-title">WordPress</div>
+<div class="grid2 mb-16">
+<div><label>URL Admin WP</label><input id="cf-wpadmin-${id}" value="${si.wp_admin_url||''}" placeholder="https://site.fr/wp-admin/"></div>
+<div><label>Username WP</label><input id="cf-wpuser-${id}" value="${si.wp_username||''}"></div>
+<div><label>Application Password</label><input id="cf-wppass-${id}" type="password" placeholder="laisser vide pour ne pas changer"></div>
+<div><label>Plugin SEO</label><select id="cf-seoplug-${id}">
+<option value="">—</option>
+<option value="yoast"${si.wp_seo_plugin==='yoast'?' selected':''}>Yoast</option>
+<option value="rankmath"${si.wp_seo_plugin==='rankmath'?' selected':''}>RankMath</option>
+<option value="seopress"${si.wp_seo_plugin==='seopress'?' selected':''}>SEOPress</option>
+</select></div>
+</div>
+
+<div class="accent-title">Search Console</div>
+<div class="grid2 mb-16">
+<div><label>Email compte GSC</label><input id="cf-scemail-${id}" value="${si.sc_email||''}" placeholder="site@gmail.com"></div>
+<div><label>Token OAuth (JSON)</label><input id="cf-sctoken-${id}" placeholder='{"client_id":"...","refresh_token":"..."}'></div>
+</div>
+
+<div class="accent-title">Hébergement</div>
+<div class="grid2 mb-16">
+<div><label>Hébergeur</label><input id="cf-host-${id}" value="${si.host_provider||''}" placeholder="hetzner, ovh, vultr..."></div>
+<div><label>IP VPS</label><input id="cf-hostip-${id}" value="${si.host_ip||''}" placeholder="1.2.3.4"></div>
+<div><label>Localisation</label><input id="cf-vpslocale-${id}" value="${si.vps_location||''}" placeholder="DE, FR, NL..."></div>
+</div>
+
+<div class="accent-title">Profil éditorial</div>
+<div class="grid2 mb-16">
+<div><label>Niche</label><input id="cf-niche-${id}" value="${si.niche||''}"></div>
+<div><label>Ton</label><select id="cf-tone-${id}">
+<option value="conversationnel"${si.editorial_tone==='conversationnel'?' selected':''}>Conversationnel</option>
+<option value="journalistique"${si.editorial_tone==='journalistique'?' selected':''}>Journalistique</option>
+<option value="technique"${si.editorial_tone==='technique'?' selected':''}>Technique</option>
+<option value="commercial"${si.editorial_tone==='commercial'?' selected':''}>Commercial</option>
+<option value="academique"${si.editorial_tone==='academique'?' selected':''}>Académique</option>
+</select></div>
+<div><label>Longueur moyenne (mots)</label><input id="cf-artlen-${id}" type="number" value="${si.avg_article_length||1500}"></div>
+<div><label>Instructions Claude (style)</label><input id="cf-style-${id}" value="${si.editorial_style||''}" placeholder="Utilise des exemples concrets..."></div>
+</div>
+
+<div style="display:flex;gap:8px;justify-content:flex-end">
+<button class="btn2" onclick="event.stopPropagation();toggleSiteConfig(${id})">Fermer</button>
+<button class="btn" onclick="event.stopPropagation();saveSiteConfig(${id})">Sauvegarder</button>
+</div>
+</div>`;
+
+panel.classList.remove('hidden');
+}
+
+async function saveSiteConfig(id){
+const msgEl=document.getElementById('cfg-msg-'+id);
+msgEl.style.color='var(--muted)';
+msgEl.textContent='Sauvegarde...';
+
+const d={
+wp_admin_url:document.getElementById('cf-wpadmin-'+id).value||null,
+wp_username:document.getElementById('cf-wpuser-'+id).value||null,
+wp_seo_plugin:document.getElementById('cf-seoplug-'+id).value||null,
+sc_email:document.getElementById('cf-scemail-'+id).value||null,
+host_provider:document.getElementById('cf-host-'+id).value||null,
+host_ip:document.getElementById('cf-hostip-'+id).value||null,
+vps_location:document.getElementById('cf-vpslocale-'+id).value||null,
+niche:document.getElementById('cf-niche-'+id).value||null,
+editorial_tone:document.getElementById('cf-tone-'+id).value||null,
+avg_article_length:Number(document.getElementById('cf-artlen-'+id).value)||null,
+editorial_style:document.getElementById('cf-style-'+id).value||null,
+};
+
+// Ajouter les champs mot de passe seulement si remplis
+const wppass=document.getElementById('cf-wppass-'+id).value;
+if(wppass)d.wp_app_password=wppass;
+const sctoken=document.getElementById('cf-sctoken-'+id).value;
+if(sctoken)d.sc_token_json=sctoken;
+
+// Supprimer les nulls
+Object.keys(d).forEach(k=>{if(d[k]===null||d[k]==='')delete d[k];});
+
+const res=await apiFetch('/sites/'+id,{method:'PUT',body:JSON.stringify(d)});
+if(res.message){
+msgEl.style.color='var(--success)';
+msgEl.textContent='\u2713 Sauvegardé';
+setTimeout(()=>{msgEl.textContent='';},3000);
+}else{
+msgEl.style.color='var(--danger)';
+msgEl.textContent='Erreur lors de la sauvegarde';
+}
+}
+
+async function testWP(id){
+const msgEl=document.getElementById('cfg-msg-'+id);
+msgEl.style.color='var(--muted)';
+msgEl.textContent='Test en cours...';
+const res=await apiFetch('/generator/test-connection/'+id,{method:'POST'});
+if(res.ok){
+msgEl.style.color='var(--success)';
+msgEl.textContent='\u2713 Connexion WP OK (HTTP '+res.status_code+')';
+}else{
+msgEl.style.color='var(--danger)';
+msgEl.textContent='\u2717 Erreur : '+(res.error||'connexion impossible');
+}
+}
+
+async function scanSite(id){
+const msgEl=document.getElementById('cfg-msg-'+id);
+msgEl.style.color='var(--muted)';
+msgEl.textContent='Scan SEO en cours...';
+try{
+const res=await apiFetch('/actions/scan/'+id,{method:'POST'});
+msgEl.style.color='var(--success)';
+msgEl.textContent=`\u2713 Scan terminé \u2014 ${res.optimizations||0} optim. / ${res.new_content||0} nouveaux contenus`;
+setTimeout(()=>loadOverview(),1500);
+}catch(e){
+msgEl.style.color='var(--danger)';
+msgEl.textContent='Erreur lors du scan';
+}
+}
+
+async function deleteSite(id){
+await apiFetch('/sites/'+id,{method:'DELETE'});
+loadOverview();
+}
 
 // GENERATOR
 async function loadGenerator(){

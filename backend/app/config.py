@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     proxy_url: str = ""
 
+    # Clé Fernet pour chiffrer les credentials en BDD
+    # Générer avec : python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    encryption_key: str = ""
+
+    # CORS — mettre l'URL du dashboard (ex: https://dashboard.monserveur.com)
+    allowed_origins: str = "http://localhost:3000,http://localhost:8000"
+
     class Config:
         env_file = ".env"
 

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Enum, Float
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Enum, Float, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -50,8 +50,12 @@ class Action(Base):
     generated_meta_title = Column(String(500))
     generated_meta_description = Column(String(500))
 
-    # Coût estimé
+    # Coût estimé et réel
     estimated_api_cost = Column(Float, default=0)
+    actual_api_cost = Column(Float, default=0)
+
+    # Données supplémentaires (ex: city info pour géoloc)
+    extra_data = Column(JSON)
 
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -60,3 +64,4 @@ class Action(Base):
 
     # Relations
     site = relationship("Site", back_populates="actions")
+    page = relationship("Page", foreign_keys=[page_id])

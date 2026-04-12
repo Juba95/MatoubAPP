@@ -6,7 +6,7 @@ from app.models.site import Site
 class WPPublisher:
     """Publie du contenu sur WordPress via l'API REST"""
 
-    def __init__(self, site: Site):
+    def __init__(self, site: Site, proxy_url: str | None = None):
         self.base_url = f"https://{site.domain}/wp-json/wp/v2"
         creds = base64.b64encode(
             f"{site.wp_username}:{site.wp_app_password}".encode()
@@ -15,9 +15,13 @@ class WPPublisher:
             "Authorization": f"Basic {creds}",
             "Content-Type": "application/json",
         }
+        self.proxy_url = proxy_url or None
 
     def _client(self):
-        return httpx.Client(headers=self.headers, timeout=30)
+        kwargs = {"headers": self.headers, "timeout": 30}
+        if self.proxy_url:
+            kwargs["proxy"] = self.proxy_url
+        return httpx.Client(**kwargs)
 
     def create_post(
         self,

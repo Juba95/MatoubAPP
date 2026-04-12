@@ -6,6 +6,8 @@ from typing import Optional
 from app.database import get_db
 from app.auth import get_current_user
 from app.models.action import Action, ActionStatus, ActionType
+from app.models.site import SiteConfig
+from app.tasks import execute_action, get_publish_eta
 
 router = APIRouter(prefix="/actions", tags=["actions"], dependencies=[Depends(get_current_user)])
 
@@ -43,6 +45,7 @@ def list_actions(
             "impressions": a.impressions,
             "impact_score": a.impact_score,
             "estimated_api_cost": a.estimated_api_cost,
+            "actual_api_cost": a.actual_api_cost,
             "created_at": a.created_at,
         }
         for a in actions
@@ -60,8 +63,18 @@ def validate_action(action_id: int, db: Session = Depends(get_db)):
     action.status = ActionStatus.VALIDATED
     action.validated_at = datetime.now(timezone.utc)
     db.commit()
-    # TODO: déclencher la tâche Celery de génération
-    return {"message": "Action validated", "id": action.id}
+
+    # Horaire aléatoire dans la fenêtre de publication configurée
+    site_config = db.query(SiteConfig).filter(SiteConfig.site_id == action.site_id).first()
+    eta = get_publish_eta(site_config)
+
+    task = execute_action.apply_async(args=[action_id], eta=eta)
+    return {
+        "message": "Action validated",
+        "id": action.id,
+        "task_id": task.id,
+        "scheduled_at": eta.isoformat() if eta else "immediate",
+    }
 
 
 @router.post("/validate-batch")
@@ -69,6 +82,17 @@ def validate_batch(action_ids: list[int], db: Session = Depends(get_db)):
     """Valider plusieurs actions d'un coup"""
     now = datetime.now(timezone.utc)
     count = 0
+    task_ids = []
+
+    # Charger toutes les SiteConfigs en une passe
+    site_ids = {
+        a.site_id for a in db.query(Action).filter(Action.id.in_(action_ids)).all()
+    }
+    site_configs = {
+        sc.site_id: sc
+        for sc in db.query(SiteConfig).filter(SiteConfig.site_id.in_(site_ids)).all()
+    }
+
     for aid in action_ids:
         action = db.query(Action).filter(
             Action.id == aid, Action.status == ActionStatus.PENDING
@@ -77,8 +101,17 @@ def validate_batch(action_ids: list[int], db: Session = Depends(get_db)):
             action.status = ActionStatus.VALIDATED
             action.validated_at = now
             count += 1
+
     db.commit()
-    return {"message": f"{count} actions validated"}
+
+    for aid in action_ids:
+        action = db.query(Action).filter(Action.id == aid).first()
+        if action and action.status == ActionStatus.VALIDATED:
+            eta = get_publish_eta(site_configs.get(action.site_id))
+            task = execute_action.apply_async(args=[aid], eta=eta)
+            task_ids.append(task.id)
+
+    return {"message": f"{count} actions validated", "task_ids": task_ids}
 
 
 @router.post("/{action_id}/reject")
@@ -89,6 +122,19 @@ def reject_action(action_id: int, db: Session = Depends(get_db)):
     action.status = ActionStatus.REJECTED
     db.commit()
     return {"message": "Action rejected"}
+
+
+@router.post("/scan/{site_id}")
+def scan_site(site_id: int, db: Session = Depends(get_db)):
+    """Lance un scan SEO sur un site et crée les actions dans la file"""
+    from app.models.site import Site
+    from app.services.seo_agent import SEOAgent
+    site = db.query(Site).filter(Site.id == site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    agent = SEOAgent(db)
+    result = agent.scan_site(site)
+    return result
 
 
 @router.get("/history")

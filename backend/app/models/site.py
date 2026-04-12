@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.crypto import EncryptedString
 
 
 class Site(Base):
@@ -20,13 +21,13 @@ class Site(Base):
     # WordPress
     wp_admin_url = Column(String(500))
     wp_username = Column(String(100))
-    wp_app_password = Column(String(255))  # chiffré
-    wp_theme = Column(String(100))  # flavor-flavor-flavor, flavor-flavor-flavor
+    wp_app_password = Column(EncryptedString)
+    wp_theme = Column(String(100))
     wp_seo_plugin = Column(String(50))  # yoast, rankmath, seopress
 
     # Search Console (1 compte par site)
     sc_email = Column(String(255))
-    sc_token_json = Column(Text)  # OAuth token chiffré
+    sc_token_json = Column(EncryptedString)
 
     # Profil éditorial (anti-footprint contenu)
     editorial_tone = Column(String(50))  # journalistique, technique, conversationnel
@@ -37,14 +38,14 @@ class Site(Base):
     # FTP (pour le générateur WP)
     ftp_host = Column(String(255))
     ftp_user = Column(String(100))
-    ftp_password = Column(String(255))  # chiffré
+    ftp_password = Column(EncryptedString)
     ftp_path = Column(String(255), default="/")
 
     # BDD MySQL du site (pour le générateur WP)
     db_host = Column(String(255))
     db_name = Column(String(100))
     db_user = Column(String(100))
-    db_password = Column(String(255))  # chiffré
+    db_password = Column(EncryptedString)
 
     # État
     is_active = Column(Boolean, default=True)

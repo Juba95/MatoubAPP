@@ -182,8 +182,17 @@ def generate_geoloc(req: GeolocRequest, db: Session = Depends(get_db)):
             title=f"{site.domain} — {keyword}",
             keyword=keyword,
             description=f"Page géolocalisée pour {v['name']} ({v['department']}) - {v['population']} hab.",
-            impact_score=v["population"] / 100,  # scoring basique par population
+            impact_score=v["population"] / 100,
             estimated_api_cost=0.03,
+            extra_data={
+                "city": v["name"],
+                "department": v["department"],
+                "postal_code": v["postal_code"],
+                "region": v["region"],
+                "population": v["population"],
+                "lat": v["lat"],
+                "lng": v["lng"],
+            },
         )
         db.add(action)
         created += 1
