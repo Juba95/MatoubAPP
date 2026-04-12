@@ -1,0 +1,129 @@
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy import func as sqlfunc
+from pydantic import BaseModel
+from typing import Optional
+from app.database import get_db
+from app.auth import get_current_user
+from app.models.site import Site
+from app.models.page import Page, PageStatus
+from app.models.action import Action, ActionStatus
+
+router = APIRouter(prefix="/sites", tags=["sites"], dependencies=[Depends(get_current_user)])
+
+
+class SiteCreate(BaseModel):
+    name: str
+    domain: str
+    niche: Optional[str] = None
+    host_provider: Optional[str] = None
+    host_ip: Optional[str] = None
+    vps_location: Optional[str] = None
+    wp_admin_url: Optional[str] = None
+    wp_username: Optional[str] = None
+    wp_app_password: Optional[str] = None
+    wp_theme: Optional[str] = None
+    wp_seo_plugin: Optional[str] = None
+    sc_email: Optional[str] = None
+    editorial_tone: Optional[str] = "conversationnel"
+    editorial_style: Optional[str] = None
+    avg_article_length: Optional[int] = 1500
+    ftp_host: Optional[str] = None
+    ftp_user: Optional[str] = None
+    ftp_password: Optional[str] = None
+    db_host: Optional[str] = None
+    db_name: Optional[str] = None
+    db_user: Optional[str] = None
+    db_password: Optional[str] = None
+
+
+class SiteUpdate(SiteCreate):
+    name: Optional[str] = None
+    domain: Optional[str] = None
+
+
+@router.get("/")
+def list_sites(db: Session = Depends(get_db)):
+    sites = db.query(Site).filter(Site.is_active == True).all()
+    result = []
+    for s in sites:
+        total_pages = db.query(sqlfunc.count(Page.id)).filter(
+            Page.site_id == s.id, Page.status == PageStatus.PUBLISHED
+        ).scalar()
+        pending_actions = db.query(sqlfunc.count(Action.id)).filter(
+            Action.site_id == s.id, Action.status == ActionStatus.PENDING
+        ).scalar()
+        avg_pos = db.query(sqlfunc.avg(Page.avg_position)).filter(
+            Page.site_id == s.id, Page.avg_position.isnot(None)
+        ).scalar()
+        prev_avg_pos = db.query(sqlfunc.avg(Page.prev_position)).filter(
+            Page.site_id == s.id, Page.prev_position.isnot(None)
+        ).scalar()
+
+        pages_updated = db.query(sqlfunc.count(Page.id)).filter(
+            Page.site_id == s.id, Page.status == PageStatus.UPDATED
+        ).scalar()
+        pages_pending = db.query(sqlfunc.count(Page.id)).filter(
+            Page.site_id == s.id, Page.status == PageStatus.PENDING
+        ).scalar()
+
+        result.append({
+            "id": s.id,
+            "name": s.name,
+            "domain": s.domain,
+            "niche": s.niche,
+            "host_provider": s.host_provider,
+            "vps_location": s.vps_location,
+            "wp_theme": s.wp_theme,
+            "editorial_tone": s.editorial_tone,
+            "total_pages": total_pages or 0,
+            "avg_position": round(avg_pos, 1) if avg_pos else None,
+            "prev_avg_position": round(prev_avg_pos, 1) if prev_avg_pos else None,
+            "position_delta": round((prev_avg_pos or 0) - (avg_pos or 0), 1) if avg_pos and prev_avg_pos else 0,
+            "pages_updated": pages_updated or 0,
+            "pages_pending": pages_pending or 0,
+            "pending_actions": pending_actions or 0,
+            "is_active": s.is_active,
+        })
+    return result
+
+
+@router.post("/")
+def create_site(data: SiteCreate, db: Session = Depends(get_db)):
+    existing = db.query(Site).filter(Site.domain == data.domain).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Domain already exists")
+    site = Site(**data.model_dump(exclude_none=True))
+    db.add(site)
+    db.commit()
+    db.refresh(site)
+    return {"id": site.id, "domain": site.domain, "message": "Site created"}
+
+
+@router.get("/{site_id}")
+def get_site(site_id: int, db: Session = Depends(get_db)):
+    site = db.query(Site).filter(Site.id == site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    return site
+
+
+@router.put("/{site_id}")
+def update_site(site_id: int, data: SiteUpdate, db: Session = Depends(get_db)):
+    site = db.query(Site).filter(Site.id == site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    for k, v in data.model_dump(exclude_none=True).items():
+        setattr(site, k, v)
+    db.commit()
+    return {"message": "Updated"}
+
+
+@router.delete("/{site_id}")
+def delete_site(site_id: int, db: Session = Depends(get_db)):
+    site = db.query(Site).filter(Site.id == site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    site.is_active = False
+    db.commit()
+    return {"message": "Deactivated"}
