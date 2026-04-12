@@ -22,3 +22,24 @@ def get_db():
 def init_db():
     from app.models import site, page, action, keyword  # noqa
     Base.metadata.create_all(bind=engine)
+    _migrate(engine)
+
+
+def _migrate(eng):
+    """Ajoute les colonnes manquantes sur les tables existantes."""
+    from sqlalchemy import text, inspect
+    insp = inspect(eng)
+
+    migrations = [
+        ("actions", "actual_api_cost", "FLOAT DEFAULT 0"),
+        ("actions", "extra_data", "JSON"),
+    ]
+
+    with eng.connect() as conn:
+        for table, column, col_type in migrations:
+            if table not in insp.get_table_names():
+                continue
+            existing = [c["name"] for c in insp.get_columns(table)]
+            if column not in existing:
+                conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {col_type}'))
+                conn.commit()
