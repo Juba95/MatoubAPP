@@ -165,7 +165,9 @@ if(n===3)loadSettings();
 // OVERVIEW
 async function loadOverview(){
 _openCfg=null;
-const[ov,sites,actions]=await Promise.all([apiFetch('/overview/'),apiFetch('/sites/'),apiFetch('/actions/')]);
+let ov,sites,actions;
+try{[ov,sites,actions]=await Promise.all([apiFetch('/overview/'),apiFetch('/sites/'),apiFetch('/actions/')]);}
+catch(e){document.getElementById('tab-0').innerHTML=`<div class="card" style="color:var(--danger)">Erreur chargement : ${e.message}</div>`;return;}
 let h=`<div class="metrics">
 <div class="metric"><div class="metric-label">Sites actifs</div><div class="metric-val">${ov.total_sites}</div></div>
 <div class="metric"><div class="metric-label">Pages totales</div><div class="metric-val">${fmt(ov.total_pages)}</div></div>
@@ -408,7 +410,8 @@ loadOverview();
 
 // GENERATOR
 async function loadGenerator(){
-const sites=await apiFetch('/sites/');
+let sites;
+try{sites=await apiFetch('/sites/');}catch(e){document.getElementById('tab-1').innerHTML=`<div class="card" style="color:var(--danger)">Erreur : ${e.message}</div>`;return;}
 let h=`<div class="section-title mb-12">Générateur WordPress</div><div class="card">
 <label>Site cible</label><select id="gen-site" style="margin-bottom:16px" onchange="showGenForm()"><option value="">Sélectionner...</option>`;
 sites.forEach(s=>{h+=`<option value="${s.id}">${s.name} \u2014 ${s.domain}</option>`;});
@@ -451,7 +454,8 @@ if(d.logs?.some(l=>l.startsWith('SUCCESS')||l.startsWith('ERROR')))clearInterval
 let geoRegions=[],geoDepts=[],selRegs=[],selDepts=[],geoPreview=null;
 
 async function loadGeoloc(){
-const[sites,regions]=await Promise.all([apiFetch('/sites/'),apiFetch('/geoloc/regions')]);
+let sites,regions;
+try{[sites,regions]=await Promise.all([apiFetch('/sites/'),apiFetch('/geoloc/regions')]);}catch(e){document.getElementById('tab-2').innerHTML=`<div class="card" style="color:var(--danger)">Erreur : ${e.message}</div>`;return;}
 geoRegions=regions;selRegs=[];selDepts=[];geoPreview=null;
 let h=`<div class="section-title mb-12">Pages géolocalisées</div><div class="card">
 <div class="grid2 mb-16">
