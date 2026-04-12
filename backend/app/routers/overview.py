@@ -28,11 +28,11 @@ def get_overview(db: Session = Depends(get_db)):
     ).scalar()
     optimize_count = db.query(sqlfunc.count(Action.id)).filter(
         Action.status == ActionStatus.PENDING,
-        Action.action_type == "optimize",
+        Action.action_type == ActionType.OPTIMIZE,
     ).scalar()
     create_count = db.query(sqlfunc.count(Action.id)).filter(
         Action.status == ActionStatus.PENDING,
-        Action.action_type.in_(["create", "geoloc"]),
+        Action.action_type.in_([ActionType.CREATE, ActionType.GEOLOC]),
     ).scalar()
 
     return {

@@ -50,7 +50,7 @@ Retourne en JSON avec les clés :
 - "content": contenu HTML complet (H2, H3, paragraphes)"""
 
         response = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=4000,
             system=system,
             messages=[{"role": "user", "content": user_prompt}],
@@ -79,7 +79,7 @@ Retourne en JSON avec les clés :
 - "content": contenu HTML complet"""
 
         response = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=3000,
             system=system,
             messages=[{"role": "user", "content": user_prompt}],
@@ -108,7 +108,7 @@ Retourne en JSON :
 - "changes_summary": résumé des changements effectués"""
 
         response = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=4000,
             system=system,
             messages=[{"role": "user", "content": user_prompt}],

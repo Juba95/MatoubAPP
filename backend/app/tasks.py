@@ -2,12 +2,39 @@
 Tâches Celery — pipeline génération + publication.
 Lancé après validation d'une action dans la file.
 """
-import json
-import re
 import random
 from datetime import datetime, timezone, timedelta
 
 from app.celery_app import celery_app
+
+
+def _parse_claude_json(raw: str) -> dict:
+    """Parse le JSON depuis la réponse Claude — gère les blocs ```json et le texte autour."""
+    import json
+    # Tenter le bloc ```json ... ``` en premier
+    import re
+    code_block = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', raw)
+    if code_block:
+        try:
+            return json.loads(code_block.group(1))
+        except json.JSONDecodeError:
+            pass
+    # Tenter de trouver le JSON brut (accolades équilibrées)
+    depth = 0
+    start = None
+    for i, c in enumerate(raw):
+        if c == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0 and start is not None:
+                try:
+                    return json.loads(raw[start:i + 1])
+                except json.JSONDecodeError:
+                    start = None
+    return {}
 
 
 def get_publish_eta(site_config) -> datetime | None:
@@ -27,7 +54,10 @@ def get_publish_eta(site_config) -> datetime | None:
     for days_ahead in range(8):
         candidate = now + timedelta(days=days_ahead)
         if candidate.weekday() in valid_days:
-            rand_hour = random.randint(min_h, max(min_h, max_h - 1))
+            if max_h <= min_h:
+                rand_hour = min_h
+            else:
+                rand_hour = random.randint(min_h, max_h - 1)
             rand_min = random.randint(0, 59)
             eta = candidate.replace(hour=rand_hour, minute=rand_min, second=0, microsecond=0)
             if eta > now:
@@ -61,6 +91,10 @@ def execute_action(self, action_id: int):
         db.commit()
 
         site = db.query(Site).filter(Site.id == action.site_id).first()
+        if not site:
+            action.status = ActionStatus.FAILED
+            db.commit()
+            return {"skipped": True, "reason": "site not found"}
 
         # Récupérer le proxy éventuel du site
         site_config = db.query(SiteConfig).filter(SiteConfig.site_id == site.id).first()
@@ -80,7 +114,7 @@ def execute_action(self, action_id: int):
                 region=extra.get("region", ""),
             )
 
-        elif action.action_type == ActionType.OPTIMIZE and action.page_id:
+        elif action.action_type == ActionType.OPTIMIZE and action.page_id and action.page:
             page_obj = action.page
             result = claude.optimize_page(
                 site,
@@ -94,11 +128,7 @@ def execute_action(self, action_id: int):
 
         # ── Parser le JSON retourné par Claude ─────────────────────────────
         raw = result["raw"]
-        try:
-            json_match = re.search(r'\{[\s\S]*\}', raw)
-            content_data = json.loads(json_match.group()) if json_match else {}
-        except Exception:
-            content_data = {}
+        content_data = _parse_claude_json(raw)
 
         # ── Coût réel (tokens → €) ─────────────────────────────────────────
         usage = result.get("usage")

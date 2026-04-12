@@ -5,7 +5,6 @@ import zipfile
 import mysql.connector
 import secrets
 import string
-from hashlib import md5
 from app.models.site import Site
 
 
@@ -122,7 +121,7 @@ class WPInstaller:
         return f"""<?php
 define('DB_NAME', '{self.site.db_name}');
 define('DB_USER', '{self.site.db_user}');
-define('DB_PASSWORD', '{self.site.db_password}');
+define('DB_PASSWORD', '{self.site.db_password.replace(chr(39), chr(92)+chr(39))}');
 define('DB_HOST', '{self.site.db_host}');
 define('DB_CHARSET', 'utf8mb4');
 define('DB_COLLATE', '');

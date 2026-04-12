@@ -120,8 +120,11 @@ let _openCfg=null; // id du site dont le panneau est ouvert
 async function apiFetch(path,opts={}){
 const h={'Content-Type':'application/json'};
 if(TOKEN)h['Authorization']='Bearer '+TOKEN;
-const r=await fetch(API+path,{...opts,headers:h});
-if(r.status===401){localStorage.removeItem('pbn_token');location.reload();}
+let r;
+try{r=await fetch(API+path,{...opts,headers:h});}
+catch(e){throw new Error('Réseau indisponible');}
+if(r.status===401){localStorage.removeItem('pbn_token');location.reload();return;}
+if(!r.ok&&r.status!==401){const txt=await r.text().catch(()=>'');let msg;try{msg=JSON.parse(txt).detail||txt;}catch{msg=txt||r.statusText;}throw new Error(msg);}
 return r.json();
 }
 const fmt=n=>n!=null?Number(n).toLocaleString('fr-FR'):'\u2014';
@@ -226,13 +229,17 @@ function toggleAddSite(){document.getElementById('add-site-form').classList.togg
 
 async function addSite(){
 const d={name:document.getElementById('ns-name').value,domain:document.getElementById('ns-domain').value,niche:document.getElementById('ns-niche').value,host_provider:document.getElementById('ns-host').value,editorial_tone:document.getElementById('ns-tone').value};
-await apiFetch('/sites/',{method:'POST',body:JSON.stringify(d)});
+if(!d.name||!d.domain)return;
+try{await apiFetch('/sites/',{method:'POST',body:JSON.stringify(d)});
+document.getElementById('ns-name').value='';document.getElementById('ns-domain').value='';document.getElementById('ns-niche').value='';document.getElementById('ns-host').value='';
+document.getElementById('add-site-form').classList.add('hidden');
 loadOverview();
+}catch(e){alert('Erreur : '+(e.message||'impossible de créer le site'));}
 }
 
-async function validateAction(id){await apiFetch(`/actions/${id}/validate`,{method:'POST'});loadOverview();}
-async function rejectAction(id){await apiFetch(`/actions/${id}/reject`,{method:'POST'});loadOverview();}
-async function validateAll(ids){await apiFetch('/actions/validate-batch',{method:'POST',body:JSON.stringify(ids)});loadOverview();}
+async function validateAction(id){try{await apiFetch(`/actions/${id}/validate`,{method:'POST'});loadOverview();}catch(e){alert('Erreur validation : '+e.message);}}
+async function rejectAction(id){try{await apiFetch(`/actions/${id}/reject`,{method:'POST'});loadOverview();}catch(e){alert('Erreur rejet : '+e.message);}}
+async function validateAll(ids){try{await apiFetch('/actions/validate-batch',{method:'POST',body:JSON.stringify(ids)});loadOverview();}catch(e){alert('Erreur batch : '+e.message);}}
 
 // ─── PANNEAU CONFIG SITE ─────────────────────────────────────────────────────
 
@@ -424,15 +431,19 @@ async function installWP(){
 const sid=document.getElementById('gen-site').value;
 if(!sid)return;
 const cfg={ftp_host:document.getElementById('g-ftp-host').value,ftp_user:document.getElementById('g-ftp-user').value,ftp_password:document.getElementById('g-ftp-pass').value,wp_username:document.getElementById('g-wp-user').value,db_host:document.getElementById('g-db-host').value,db_name:document.getElementById('g-db-name').value,db_user:document.getElementById('g-db-user').value,db_password:document.getElementById('g-db-pass').value};
-await apiFetch(`/sites/${sid}`,{method:'PUT',body:JSON.stringify(cfg)});
-await apiFetch('/generator/install',{method:'POST',body:JSON.stringify({site_id:Number(sid)})});
+try{await apiFetch(`/sites/${sid}`,{method:'PUT',body:JSON.stringify(cfg)});}
+catch(e){alert('Erreur sauvegarde config : '+e.message);return;}
+try{await apiFetch('/generator/install',{method:'POST',body:JSON.stringify({site_id:Number(sid)})});}
+catch(e){alert('Erreur lancement install : '+e.message);return;}
 const poll=setInterval(async()=>{
+try{
 const d=await apiFetch(`/generator/logs/${sid}`);
 let lh='<div class="card log-box">';
 (d.logs||[]).forEach(l=>{const cls=l.startsWith('ERROR')?'log-err':l.startsWith('SUCCESS')?'log-win':'log-ok';lh+=`<div class="${cls}">${l}</div>`;});
 lh+='</div>';
 document.getElementById('gen-logs').innerHTML=lh;
 if(d.logs?.some(l=>l.startsWith('SUCCESS')||l.startsWith('ERROR')))clearInterval(poll);
+}catch(e){clearInterval(poll);document.getElementById('gen-logs').innerHTML=`<div class="card log-box"><div class="log-err">Erreur réseau : ${e.message}</div></div>`;}
 },2000);
 }
 
@@ -483,7 +494,9 @@ return{site_id:Number(document.getElementById('geo-site').value),keyword_templat
 
 async function previewGeoloc(){
 if(!document.getElementById('geo-site').value||!document.getElementById('geo-kw').value)return;
-geoPreview=await apiFetch('/geoloc/preview',{method:'POST',body:JSON.stringify(geoBody())});
+document.getElementById('geo-preview').innerHTML='';document.getElementById('geo-gen-btn').innerHTML='';
+try{geoPreview=await apiFetch('/geoloc/preview',{method:'POST',body:JSON.stringify(geoBody())});}
+catch(e){document.getElementById('geo-preview').innerHTML=`<div class="card" style="color:var(--danger)">Erreur : ${e.message}</div>`;return;}
 document.getElementById('geo-gen-btn').innerHTML=`<button class="btn" style="background:var(--success)" onclick="generateGeoloc()">Générer ${geoPreview.total_pages} pages (~${geoPreview.estimated_cost_eur}\u20AC)</button>`;
 let h=`<div class="card"><div style="font-size:14px;font-weight:500;margin-bottom:8px">${geoPreview.total_pages} pages \u2014 ~${geoPreview.estimated_cost_eur}\u20AC</div><div style="max-height:260px;overflow-y:auto">`;
 geoPreview.pages.forEach(p=>{h+=`<div class="preview-row"><span>${p.keyword}</span><span class="preview-meta">${p.city} (${p.department}) \u2014 ${fmt(p.population)} hab.</span></div>`;});
@@ -493,8 +506,9 @@ document.getElementById('geo-preview').innerHTML=h;
 }
 
 async function generateGeoloc(){
-const res=await apiFetch('/geoloc/generate',{method:'POST',body:JSON.stringify(geoBody())});
+try{const res=await apiFetch('/geoloc/generate',{method:'POST',body:JSON.stringify(geoBody())});
 document.getElementById('geo-result').innerHTML=`<div class="card result-box"><div class="result-msg">${res.message}</div><div class="result-sub">Les actions apparaissent dans la file de validation (Overview)</div></div>`;
+}catch(e){document.getElementById('geo-result').innerHTML=`<div class="card" style="color:var(--danger)">Erreur : ${e.message}</div>`;}
 }
 
 // SETTINGS

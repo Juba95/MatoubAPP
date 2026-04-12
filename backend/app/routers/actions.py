@@ -22,7 +22,10 @@ def list_actions(
     """Liste des actions triées par impact_score"""
     q = db.query(Action)
     if status:
-        q = q.filter(Action.status == status)
+        try:
+            q = q.filter(Action.status == ActionStatus(status))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
     else:
         q = q.filter(Action.status == ActionStatus.PENDING)
     if site_id:

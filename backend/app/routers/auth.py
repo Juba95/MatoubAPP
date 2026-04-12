@@ -1,7 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from app.config import get_settings
-from app.auth import create_token, verify_password, hash_password
+from app.auth import create_token, verify_password, hash_password, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -38,5 +38,5 @@ def login(req: LoginRequest):
 
 
 @router.get("/me")
-def me():
-    return {"email": get_settings().admin_email}
+def me(email: str = Depends(get_current_user)):
+    return {"email": email}

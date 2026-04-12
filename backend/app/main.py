@@ -43,9 +43,13 @@ def on_startup():
     init_db()
 
 
+import os
+_static_dir = os.path.join(os.path.dirname(__file__), "..", "static")
+
+
 @app.get("/")
 def root():
-    return FileResponse("static/dashboard.html")
+    return FileResponse(os.path.join(_static_dir, "dashboard.html"))
 
 
 @app.get("/health")
