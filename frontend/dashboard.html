@@ -203,6 +203,7 @@ h+=`<div class="card site-row" id="site-row-${si.id}" onclick="toggleSiteConfig(
 </div>
 ${pillHtml(label,col)}
 <span class="cfg-icon" id="cfg-icon-${si.id}">\u2699\uFE0F</span>
+<span style="font-size:14px;color:var(--muted);margin-left:4px;flex-shrink:0;cursor:pointer" title="Supprimer" onclick="event.stopPropagation();confirmDeleteSite(${si.id},'${si.name.replace(/'/g,"\\'")}')">&#x1F5D1;</span>
 </div>
 <div id="site-cfg-${si.id}" class="hidden"></div>`;
 });
@@ -404,8 +405,12 @@ msgEl.textContent='Erreur lors du scan';
 }
 
 async function deleteSite(id){
-await apiFetch('/sites/'+id,{method:'DELETE'});
-loadOverview();
+try{await apiFetch('/sites/'+id,{method:'DELETE'});loadOverview();}
+catch(e){alert('Erreur suppression : '+e.message);}
+}
+
+function confirmDeleteSite(id,name){
+if(confirm('Supprimer le site "'+name+'" ?\nCette action est irréversible.')){deleteSite(id);}
 }
 
 // GENERATOR

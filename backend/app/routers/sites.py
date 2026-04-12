@@ -124,6 +124,6 @@ def delete_site(site_id: int, db: Session = Depends(get_db)):
     site = db.query(Site).filter(Site.id == site_id).first()
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
-    site.is_active = False
+    db.delete(site)
     db.commit()
-    return {"message": "Deactivated"}
+    return {"message": "Deleted"}
