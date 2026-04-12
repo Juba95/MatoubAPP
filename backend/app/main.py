@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from app.database import init_db
 from app.routers import (
     auth_router,
@@ -12,13 +13,12 @@ from app.routers import (
 
 app = FastAPI(
     title="PBN Manager",
-    description="Dashboard privé de gestion de PBN avec agent SEO autonome",
+    description="Dashboard prive de gestion de PBN avec agent SEO autonome",
     version="1.0.0",
-    docs_url="/docs",  # Swagger UI accessible en local
+    docs_url="/docs",
     redoc_url=None,
 )
 
-# CORS — restreint en prod (localhost seulement)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,7 +27,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routers
 app.include_router(auth_router)
 app.include_router(sites_router)
 app.include_router(overview_router)
@@ -43,7 +42,7 @@ def on_startup():
 
 @app.get("/")
 def root():
-    return {"app": "PBN Manager", "version": "1.0.0", "status": "running"}
+    return FileResponse("static/dashboard.html")
 
 
 @app.get("/health")
