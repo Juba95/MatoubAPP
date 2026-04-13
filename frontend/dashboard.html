@@ -303,7 +303,9 @@ panel.innerHTML=`<div class="cfg-panel">
 <div class="accent-title">Search Console</div>
 <div class="grid2 mb-16">
 <div><label>Email compte GSC</label><input id="cf-scemail-${id}" value="${si.sc_email||''}" placeholder="site@gmail.com"></div>
-<div><label>Token OAuth (JSON)</label><input id="cf-sctoken-${id}" placeholder='{"client_id":"...","refresh_token":"..."}'></div>
+<div style="display:flex;align-items:flex-end;gap:8px">
+${si.sc_token_json?'<span class="pill" style="background:var(--success)18;color:var(--success)">GSC connecté</span>':'<button class="btn2 btn-sm" onclick="event.stopPropagation();connectGSC('+id+')">Connecter Google Search Console</button>'}
+</div>
 </div>
 
 <div class="accent-title">Hébergement</div>
@@ -402,6 +404,13 @@ setTimeout(()=>loadOverview(),1500);
 msgEl.style.color='var(--danger)';
 msgEl.textContent='Erreur lors du scan';
 }
+}
+
+async function connectGSC(siteId){
+try{
+const res=await apiFetch('/auth/gsc/connect/'+siteId);
+window.open(res.url,'_blank','width=600,height=700');
+}catch(e){alert('Erreur GSC : '+e.message);}
 }
 
 async function deleteSite(id){

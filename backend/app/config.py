@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     replicate_api_token: str = ""
 
+    # Google OAuth (Search Console)
+    gsc_client_id: str = ""
+    gsc_client_secret: str = ""
+    gsc_redirect_uri: str = "http://localhost:8000/auth/gsc/callback"
+
     redis_url: str = "redis://localhost:6379/0"
     proxy_url: str = ""
 
