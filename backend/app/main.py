@@ -14,8 +14,8 @@ from app.routers import (
 )
 
 app = FastAPI(
-    title="PBN Manager",
-    description="Dashboard prive de gestion de PBN avec agent SEO autonome",
+    title="MatoubeAPP",
+    description="SEO Automation Dashboard",
     version="1.0.0",
     docs_url="/docs",
     redoc_url=None,
