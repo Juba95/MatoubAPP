@@ -67,15 +67,21 @@ def validate_action(action_id: int, db: Session = Depends(get_db)):
     action.validated_at = datetime.now(timezone.utc)
     db.commit()
 
-    # Horaire aléatoire dans la fenêtre de publication configurée
-    site_config = db.query(SiteConfig).filter(SiteConfig.site_id == action.site_id).first()
-    eta = get_publish_eta(site_config)
+    # Lancer le task Celery — si Redis/Celery est down, on valide quand même
+    task_id = None
+    eta = None
+    try:
+        site_config = db.query(SiteConfig).filter(SiteConfig.site_id == action.site_id).first()
+        eta = get_publish_eta(site_config)
+        task = execute_action.apply_async(args=[action_id], eta=eta)
+        task_id = task.id
+    except Exception:
+        pass  # Celery down — l'action est validée, le task sera relancé manuellement
 
-    task = execute_action.apply_async(args=[action_id], eta=eta)
     return {
         "message": "Action validated",
         "id": action.id,
-        "task_id": task.id,
+        "task_id": task_id,
         "scheduled_at": eta.isoformat() if eta else "immediate",
     }
 
@@ -107,12 +113,15 @@ def validate_batch(action_ids: list[int], db: Session = Depends(get_db)):
 
     db.commit()
 
-    for aid in action_ids:
-        action = db.query(Action).filter(Action.id == aid).first()
-        if action and action.status == ActionStatus.VALIDATED:
-            eta = get_publish_eta(site_configs.get(action.site_id))
-            task = execute_action.apply_async(args=[aid], eta=eta)
-            task_ids.append(task.id)
+    try:
+        for aid in action_ids:
+            action = db.query(Action).filter(Action.id == aid).first()
+            if action and action.status == ActionStatus.VALIDATED:
+                eta = get_publish_eta(site_configs.get(action.site_id))
+                task = execute_action.apply_async(args=[aid], eta=eta)
+                task_ids.append(task.id)
+    except Exception:
+        pass  # Celery down
 
     return {"message": f"{count} actions validated", "task_ids": task_ids}
 
