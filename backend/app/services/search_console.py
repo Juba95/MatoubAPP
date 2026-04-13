@@ -125,14 +125,23 @@ class SearchConsoleClient:
             return resp.json().get("rows", [])
 
     def get_indexed_pages(self) -> dict:
-        """Nombre de pages avec du trafic SC (plus fiable que l'API sitemaps)"""
+        """Nombre de pages indexées via l'API sitemaps GSC."""
+        with self._client() as client:
+            resp = client.get(f"{self.API_URL}/sites/{self.site_url}/sitemaps")
+            resp.raise_for_status()
+            sitemaps = resp.json().get("sitemap", [])
+            total_indexed = 0
+            total_submitted = 0
+            for s in sitemaps:
+                for content in s.get("contents", []):
+                    total_submitted += int(content.get("submitted", 0))
+                    total_indexed += int(content.get("indexed", 0))
+            # Si les sitemaps retournent des données, on les utilise
+            if total_indexed > 0 or total_submitted > 0:
+                return {"indexed": total_indexed, "submitted": total_submitted}
+        # Fallback : compter les pages uniques avec impressions sur 28j
         pages = self.get_performance(days=28, dimensions=["page"], row_limit=5000)
-        unique_pages = set()
-        for row in pages:
-            keys = row.get("keys", [])
-            if keys:
-                unique_pages.add(keys[0])
-        return {"indexed_estimate": len(unique_pages)}
+        return {"indexed": len(set(row["keys"][0] for row in pages if row.get("keys"))), "submitted": 0}
 
     def list_properties(self) -> list[dict]:
         """Liste toutes les propriétés Search Console du compte connecté."""

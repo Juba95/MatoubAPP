@@ -150,9 +150,11 @@ class SEOAgent:
         # Pages indexées
         try:
             idx = sc.get_indexed_pages()
-            results["indexed_pages"] = idx.get("indexed_estimate", 0)
+            results["indexed_pages"] = idx.get("indexed", 0)
+            results["submitted_pages"] = idx.get("submitted", 0)
         except Exception:
             results["indexed_pages"] = 0
+            results["submitted_pages"] = 0
 
         # Indexer les données actuelles par query
         # Garder la MEILLEURE page par query (celle avec la meilleure position)
