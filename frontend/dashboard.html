@@ -274,10 +274,11 @@ ${isFailed&&a.description&&a.description.includes('ERREUR:')?`<div style="font-s
 <div style="display:flex;gap:6px;margin-top:10px">
 <button class="btn2 btn-sm" onclick="rejectAction(${a.id})">Rejeter</button>
 ${isFailed?`<button class="btn-success" onclick="retryAction(${a.id})">Réessayer</button>`:`<button class="btn-success" onclick="validateAction(${a.id})">${isRunning?'En cours...':'Valider'}</button>`}
+${(isRunning||isFailed)?`<button class="btn2 btn-sm" onclick="showActionLogs(${a.id})">Logs</button>`:''}
 </div>
 </div>
 <div class="action-score">${fmt(Math.round(a.impact_score))}</div>
-</div>`;});}
+</div><div id="action-logs-${a.id}"></div>`;});}
 
 document.getElementById('tab-0').innerHTML=h;
 }
@@ -296,6 +297,25 @@ loadOverview();
 
 async function validateAction(id){try{await apiFetch(`/actions/${id}/validate`,{method:'POST'});loadOverview();}catch(e){alert('Erreur validation : '+e.message);}}
 async function retryAction(id){try{await apiFetch(`/actions/${id}/retry`,{method:'POST'});loadOverview();}catch(e){alert('Erreur retry : '+e.message);}}
+
+function showActionLogs(id){
+const container=document.getElementById('action-logs-'+id);
+if(container.innerHTML){container.innerHTML='';return;}
+container.innerHTML='<div class="log-box" style="margin-top:8px">Chargement...</div>';
+const poll=setInterval(async()=>{
+try{
+const d=await apiFetch(`/actions/logs/${id}`);
+let lh='<div class="log-box" style="margin-top:8px">';
+(d.logs||[]).forEach(l=>{
+const cls=l.startsWith('ERROR')?'log-err':l.startsWith('SUCCESS')?'log-win':l.startsWith('DONE')?'log-win':'log-ok';
+lh+=`<div class="${cls}">${l}</div>`;
+});
+lh+='</div>';
+container.innerHTML=lh;
+if(d.logs?.some(l=>l.startsWith('DONE')||l.startsWith('ERROR')))clearInterval(poll);
+}catch(e){clearInterval(poll);}
+},1500);
+}
 async function rejectAction(id){try{await apiFetch(`/actions/${id}/reject`,{method:'POST'});loadOverview();}catch(e){alert('Erreur rejet : '+e.message);}}
 async function validateAll(ids){try{await apiFetch('/actions/validate-batch',{method:'POST',body:JSON.stringify(ids)});loadOverview();}catch(e){alert('Erreur batch : '+e.message);}}
 
