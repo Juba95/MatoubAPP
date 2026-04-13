@@ -18,12 +18,6 @@ def get_overview(db: Session = Depends(get_db)):
     total_pages = db.query(sqlfunc.count(Page.id)).filter(
         Page.status == PageStatus.PUBLISHED
     ).scalar()
-    avg_position = db.query(sqlfunc.avg(Page.avg_position)).filter(
-        Page.avg_position.isnot(None)
-    ).scalar()
-    prev_avg_position = db.query(sqlfunc.avg(Page.prev_position)).filter(
-        Page.prev_position.isnot(None)
-    ).scalar()
     pending_actions = db.query(sqlfunc.count(Action.id)).filter(
         Action.status == ActionStatus.PENDING
     ).scalar()
@@ -36,17 +30,26 @@ def get_overview(db: Session = Depends(get_db)):
         Action.action_type.in_([ActionType.CREATE, ActionType.GEOLOC]),
     ).scalar()
 
-    # Keyword position distribution
+    # Position moyenne depuis les Keywords (pas les Pages)
     kw_base = db.query(Keyword).filter(Keyword.current_position.isnot(None))
     total_keywords = kw_base.count()
+    avg_position = db.query(sqlfunc.avg(Keyword.current_position)).filter(
+        Keyword.current_position.isnot(None)
+    ).scalar()
+    prev_avg_position = db.query(sqlfunc.avg(Keyword.previous_position)).filter(
+        Keyword.previous_position.isnot(None)
+    ).scalar()
+
+    # Distribution NON cumulative
     kw_top_3 = kw_base.filter(Keyword.current_position <= 3).count()
-    kw_top_10 = kw_base.filter(Keyword.current_position <= 10).count()
-    kw_top_20 = kw_base.filter(Keyword.current_position <= 20).count()
-    kw_beyond = total_keywords - kw_top_20
+    kw_4_10 = kw_base.filter(Keyword.current_position > 3, Keyword.current_position <= 10).count()
+    kw_11_20 = kw_base.filter(Keyword.current_position > 10, Keyword.current_position <= 20).count()
+    kw_21_50 = kw_base.filter(Keyword.current_position > 20, Keyword.current_position <= 50).count()
+    kw_beyond = kw_base.filter(Keyword.current_position > 50).count()
 
     # Top 5 opportunities across all sites
     opportunities = (
-        db.query(Keyword, Site.domain)
+        db.query(Keyword, Site.name)
         .join(Site, Keyword.site_id == Site.id)
         .filter(
             Keyword.impressions > 20,
@@ -61,9 +64,9 @@ def get_overview(db: Session = Depends(get_db)):
             "keyword": kw.keyword,
             "impressions": kw.impressions or 0,
             "position": kw.current_position,
-            "site_domain": domain,
+            "site_name": name,
         }
-        for kw, domain in opportunities
+        for kw, name in opportunities
     ]
 
     return {
@@ -79,9 +82,10 @@ def get_overview(db: Session = Depends(get_db)):
         "total_keywords": total_keywords,
         "position_distribution": {
             "top_3": kw_top_3,
-            "top_10": kw_top_10,
-            "top_20": kw_top_20,
-            "beyond": kw_beyond,
+            "top_4_10": kw_4_10,
+            "top_11_20": kw_11_20,
+            "top_21_50": kw_21_50,
+            "beyond_50": kw_beyond,
         },
         "top_opportunities": top_opportunities,
     }

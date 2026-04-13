@@ -202,7 +202,7 @@ class SEOAgent:
                 impact = volume * abs(position_delta)
                 actions_to_create.append({
                     "action_type": ActionType.OPTIMIZE,
-                    "title": f"{site.domain} — \"{query}\"",
+                    "title": f"{site.name} — \"{query}\"",
                     "description": f"Position {prev['position']:.0f} → {data['position']:.0f} ({position_delta:+.0f}). Page: {data['page']}",
                     "keyword": query,
                     "search_volume": volume,
@@ -235,7 +235,7 @@ class SEOAgent:
                 impact = volume * (data["position"] / 10)
                 actions_to_create.append({
                     "action_type": ActionType.CREATE,
-                    "title": f"{site.domain} — \"{query}\"",
+                    "title": f"{site.name} — \"{query}\"",
                     "description": f"Impressions fortes ({data['impressions']}) mais position faible ({data['position']:.0f}). Créer une page dédiée.",
                     "keyword": query,
                     "search_volume": volume,

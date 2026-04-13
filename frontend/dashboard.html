@@ -176,23 +176,24 @@ let h=`<div class="metrics">
 <div class="metric"><div class="metric-label">Mots-clés suivis</div><div class="metric-val">${fmt(ov.total_keywords||0)}</div></div>
 </div>`;
 
-// Distribution des positions
+// Distribution des positions (non cumulative)
 if(ov.total_keywords>0){
 h+=`<div class="card mb-12"><div class="accent-title">Distribution des positions</div>
 <div class="metrics" style="margin-bottom:0">
 <div class="metric"><div class="metric-label">Top 3</div><div class="metric-val" style="color:var(--success)">${pd.top_3||0}</div></div>
-<div class="metric"><div class="metric-label">Top 10</div><div class="metric-val" style="color:#3b82f6">${pd.top_10||0}</div></div>
-<div class="metric"><div class="metric-label">Top 20</div><div class="metric-val" style="color:var(--warn)">${pd.top_20||0}</div></div>
-<div class="metric"><div class="metric-label">20+</div><div class="metric-val" style="color:var(--danger)">${pd.beyond||0}</div></div>
+<div class="metric"><div class="metric-label">4-10</div><div class="metric-val" style="color:#3b82f6">${pd.top_4_10||0}</div></div>
+<div class="metric"><div class="metric-label">11-20</div><div class="metric-val" style="color:var(--warn)">${pd.top_11_20||0}</div></div>
+<div class="metric"><div class="metric-label">21-50</div><div class="metric-val" style="color:#f97316">${pd.top_21_50||0}</div></div>
+<div class="metric"><div class="metric-label">50+</div><div class="metric-val" style="color:var(--danger)">${pd.beyond_50||0}</div></div>
 </div></div>`;
 }
 
 // Top opportunités
 const opps=ov.top_opportunities||[];
 if(opps.length>0){
-h+=`<div class="card mb-12"><div class="accent-title">Top opportunités (impressions fortes, position faible)</div>`;
+h+=`<div class="card mb-12"><div class="accent-title">Opportunités (impressions fortes, position faible)</div>`;
 opps.forEach(o=>{
-h+=`<div class="preview-row"><span style="font-weight:500">${o.keyword}</span><span class="preview-meta">${o.site_domain} \u2014 pos. ${Math.round(o.position)} \u2014 ${fmt(o.impressions)} impr.</span></div>`;
+h+=`<div class="preview-row"><span style="font-weight:500">${o.keyword}</span><span class="preview-meta">${o.site_name} \u2014 pos. ${Math.round(o.position)} \u2014 ${fmt(o.impressions)} impr.</span></div>`;
 });
 h+=`</div>`;
 }
@@ -240,11 +241,14 @@ h+=`</div>`;
 
 if(actions.length===0){h+=`<div class="card text-center" style="color:var(--muted)">Aucune action en attente</div>`;}
 else{actions.forEach(a=>{
-const typeLabel=a.action_type==='optimize'?'Optimisation':a.action_type==='geoloc'?'Géoloc':'Nouveau';
-const typeColor=a.action_type==='optimize'?'#3b82f6':'#a855f7';
+const typeLabel=a.action_type==='optimize'?'Optimisation':a.action_type==='geoloc'?'Géoloc':'Nouveau contenu';
+const typeColor=a.action_type==='optimize'?'#3b82f6':a.action_type==='create'?'#a855f7':'#22c55e';
+const posInfo=a.current_position&&a.previous_position?`pos. ${Math.round(a.previous_position)} \u2192 ${Math.round(a.current_position)}`:'';
 h+=`<div class="card action-row">
-<div style="flex:1"><div style="font-size:13px;font-weight:500;margin-bottom:4px">${a.title}</div>
-<div class="flex-gap-8">${pillHtml(typeLabel,typeColor)}${a.impressions>0?`<span style="font-size:11px;color:var(--muted)">Vol. ${fmt(a.impressions)}</span>`:''}</div>
+<div style="flex:1">
+<div style="font-size:14px;font-weight:600;margin-bottom:2px">${a.keyword||a.title}</div>
+<div style="font-size:11px;color:var(--muted);margin-bottom:6px">${a.description||a.title}</div>
+<div class="flex-gap-8">${pillHtml(typeLabel,typeColor)}${a.search_volume>0?`<span style="font-size:11px;color:var(--muted)">Vol. ${fmt(a.search_volume)}</span>`:''}${posInfo?`<span class="down">${posInfo}</span>`:''}</div>
 <div class="flex-gap-6"><button class="btn2 btn-sm" onclick="rejectAction(${a.id})">Rejeter</button><button class="btn-success btn-sm" onclick="validateAction(${a.id})">Valider</button></div>
 </div>
 <div class="action-score">${fmt(Math.round(a.impact_score))}</div>
