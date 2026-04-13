@@ -173,54 +173,15 @@ if(n===3)loadSettings();
 // OVERVIEW
 async function loadOverview(){
 _openCfg=null;
-let ov,sites,actions;
-try{[ov,sites,actions]=await Promise.all([apiFetch('/overview/'),apiFetch('/sites/'),apiFetch('/actions/')]);}
+let sites,actions;
+try{[sites,actions]=await Promise.all([apiFetch('/sites/'),apiFetch('/actions/')]);}
 catch(e){document.getElementById('tab-0').innerHTML=`<div class="card" style="color:var(--danger)">Erreur chargement : ${e.message}</div>`;return;}
-const pd=ov.position_distribution||{};
-const totalKw=ov.total_keywords||0;
 
-let h=`<div class="metrics">
-<div class="metric"><div class="metric-label">Sites actifs</div><div class="metric-val">${ov.total_sites}</div></div>
-<div class="metric"><div class="metric-label">Mots-clés suivis</div><div class="metric-val">${fmt(totalKw)}</div></div>
-<div class="metric"><div class="metric-label">Position moyenne</div><div class="metric-val">${ov.avg_position||'\u2014'}</div><div class="metric-sub">${deltaHtml(ov.position_delta)}</div></div>
-<div class="metric"><div class="metric-label">Actions en attente</div><div class="metric-val">${ov.pending_actions}</div><div class="metric-sub" style="color:var(--muted)">${ov.pending_optimizations} optim. \u00B7 ${ov.pending_creations} contenus</div></div>
-</div>`;
+let h='';
 
-// Distribution des positions
-if(totalKw>0){
-const pcts=[pd.top_3||0,pd.top_4_10||0,pd.top_11_20||0,pd.top_21_50||0,pd.beyond_50||0].map(v=>Math.max((v/totalKw)*100,2));
-h+=`<div class="card mb-12">
-<div class="flex-between"><div class="accent-title" style="margin-bottom:0">Distribution des positions</div><span style="font-size:11px;color:var(--muted)">${fmt(totalKw)} mots-clés</span></div>
-<div class="dist-bar">
-<div style="width:${pcts[0]}%;background:var(--success)" title="Top 3 : ${pd.top_3||0}"></div>
-<div style="width:${pcts[1]}%;background:var(--blue)" title="4-10 : ${pd.top_4_10||0}"></div>
-<div style="width:${pcts[2]}%;background:var(--warn)" title="11-20 : ${pd.top_11_20||0}"></div>
-<div style="width:${pcts[3]}%;background:var(--orange)" title="21-50 : ${pd.top_21_50||0}"></div>
-<div style="width:${pcts[4]}%;background:var(--danger)" title="50+ : ${pd.beyond_50||0}"></div>
-</div>
-<div style="display:flex;gap:16px;margin-top:10px;font-size:11px;color:var(--muted);flex-wrap:wrap">
-<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--success);margin-right:4px"></span>Top 3 : <b style="color:var(--text)">${pd.top_3||0}</b></span>
-<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--blue);margin-right:4px"></span>4-10 : <b style="color:var(--text)">${pd.top_4_10||0}</b></span>
-<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--warn);margin-right:4px"></span>11-20 : <b style="color:var(--text)">${pd.top_11_20||0}</b></span>
-<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--orange);margin-right:4px"></span>21-50 : <b style="color:var(--text)">${pd.top_21_50||0}</b></span>
-<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--danger);margin-right:4px"></span>50+ : <b style="color:var(--text)">${pd.beyond_50||0}</b></span>
-</div>
-</div>`;
-}
-
-// Opportunités
-const opps=ov.top_opportunities||[];
-if(opps.length>0){
-h+=`<div class="card mb-12"><div class="accent-title">Opportunités</div>`;
-opps.forEach(o=>{
-h+=`<div class="preview-row"><div><span style="font-weight:600">${o.keyword}</span><div style="font-size:10px;color:var(--muted);margin-top:2px">${o.site_name}</div></div><div style="text-align:right"><span style="font-size:13px;font-weight:600;color:var(--warn)">pos. ${Math.round(o.position)}</span><div style="font-size:10px;color:var(--muted)">${fmt(o.impressions)} impr.</div></div></div>`;
-});
-h+=`</div>`;
-}
-
-// Sites
-h+=`<div class="flex-between mt-24 mb-10"><div class="section-title">Mes sites</div><button class="btn2 btn-sm" onclick="toggleAddSite()">+ Ajouter un site</button></div>`;
-h+=`<div id="add-site-form" class="hidden"><div class="card grid2" style="gap:10px">
+// Bouton ajouter
+h+=`<div class="flex-between mb-12"><div class="section-title" style="margin-bottom:0">Mes sites</div><button class="btn2 btn-sm" onclick="toggleAddSite()">+ Ajouter un site</button></div>`;
+h+=`<div id="add-site-form" class="hidden" style="margin-bottom:16px"><div class="card grid2" style="gap:10px">
 <div><label>Nom</label><input id="ns-name" placeholder="Mon site"></div>
 <div><label>Domaine</label><input id="ns-domain" placeholder="monsite.fr"></div>
 <div><label>Niche</label><input id="ns-niche" placeholder="plomberie, épaviste..."></div>
@@ -229,29 +190,64 @@ h+=`<div id="add-site-form" class="hidden"><div class="card grid2" style="gap:10
 <div style="display:flex;align-items:flex-end"><button class="btn" onclick="addSite()">Créer</button></div>
 </div></div>`;
 
-if(sites.length===0){h+=`<div class="card text-center" style="color:var(--muted);padding:32px">Aucun site \u2014 ajoute ton premier site pour commencer</div>`;}
-else{
+if(sites.length===0){
+h+=`<div class="card text-center" style="color:var(--muted);padding:32px">Aucun site \u2014 ajoute ton premier site</div>`;
+} else {
+// UN BLOC PAR SITE
 sites.forEach(si=>{
-const col=si.position_delta>0?'var(--success)':si.position_delta<-3?'var(--danger)':'var(--muted)';
-const label=si.position_delta>0?'+'+si.position_delta:si.position_delta<-3?si.position_delta:'Stable';
-const labelCol=si.position_delta>0?'var(--success)':si.position_delta<-3?'var(--danger)':'var(--muted)';
-h+=`<div class="card site-row" id="site-row-${si.id}" onclick="toggleSiteConfig(${si.id})">
+const dd=si.distribution||{};
+const hasData=si.total_keywords>0;
+const deltaCol=si.position_delta>0?'var(--success)':si.position_delta<-3?'var(--danger)':'var(--muted)';
+
+h+=`<div class="card" style="margin-bottom:16px;padding:0;overflow:hidden">`;
+
+// Header du site (cliquable pour config)
+h+=`<div class="site-row" id="site-row-${si.id}" onclick="toggleSiteConfig(${si.id})" style="padding:16px 22px;border-bottom:1px solid var(--border);border-radius:0">
 <div class="site-dot" style="background:${si.sc_connected?'var(--success)':'var(--muted)'}"></div>
 <div style="flex:1;min-width:0">
-<div style="font-size:14px;font-weight:600">${si.name}${si.sc_connected?'':' <span style="font-size:9px;padding:2px 6px;background:var(--card2);border-radius:4px;color:var(--muted);font-weight:500">GSC non connecté</span>'}</div>
+<div style="font-size:15px;font-weight:700">${si.name}${si.sc_connected?'':' <span style="font-size:9px;padding:2px 6px;background:var(--card2);border-radius:4px;color:var(--muted);font-weight:500">GSC non connecté</span>'}</div>
 <div style="font-size:11px;color:var(--muted);margin-top:2px">${si.domain} \u2022 ${si.host_provider||'non config.'}</div>
 </div>
-<div class="site-stats">
-<div><b>${si.indexed_pages||0}</b> pages</div>
-<div><b>${si.total_keywords||0}</b> kw</div>
-<div><b>${si.avg_position||'\u2014'}</b> pos.</div>
-<div><b>${si.pending_actions}</b> act.</div>
-</div>
-<span style="font-size:11px;font-weight:600;color:${labelCol}">${label}</span>
 <span class="cfg-icon" id="cfg-icon-${si.id}">\u2699\uFE0F</span>
-<span style="font-size:14px;color:var(--muted);margin-left:2px;flex-shrink:0;cursor:pointer;opacity:.5;transition:opacity .15s" title="Supprimer" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.5" onclick="event.stopPropagation();confirmDeleteSite(${si.id},'${si.name.replace(/'/g,"\\'")}')">&#x1F5D1;</span>
-</div>
-<div id="site-cfg-${si.id}" class="hidden"></div>`;
+<span style="font-size:14px;color:var(--muted);margin-left:2px;cursor:pointer;opacity:.4" title="Supprimer" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.4" onclick="event.stopPropagation();confirmDeleteSite(${si.id},'${si.name.replace(/'/g,"\\'")}')">&#x1F5D1;</span>
+</div>`;
+
+// Config panel (hidden)
+h+=`<div id="site-cfg-${si.id}" class="hidden"></div>`;
+
+// Métriques du site
+h+=`<div style="display:grid;grid-template-columns:repeat(5,1fr);text-align:center;border-bottom:1px solid var(--border)">
+<div style="padding:14px 8px;border-right:1px solid var(--border)"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">Pages</div><div style="font-size:20px;font-weight:700;font-family:var(--mono)">${fmt(si.indexed_pages||0)}</div></div>
+<div style="padding:14px 8px;border-right:1px solid var(--border)"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">Mots-clés</div><div style="font-size:20px;font-weight:700;font-family:var(--mono)">${fmt(si.total_keywords||0)}</div></div>
+<div style="padding:14px 8px;border-right:1px solid var(--border)"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">Pos. moy.</div><div style="font-size:20px;font-weight:700;font-family:var(--mono)">${si.avg_position||'\u2014'}</div>${si.position_delta?`<div style="font-size:11px;color:${deltaCol};font-weight:600">${si.position_delta>0?'+':''}${si.position_delta}</div>`:''}</div>
+<div style="padding:14px 8px;border-right:1px solid var(--border)"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">Actions</div><div style="font-size:20px;font-weight:700;font-family:var(--mono)">${si.pending_actions}</div></div>
+<div style="padding:14px 8px"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">Distribution</div><div style="font-size:12px;font-family:var(--mono)"><span style="color:var(--success)">${dd.top_3||0}</span> <span style="color:var(--blue)">${dd.top_4_10||0}</span> <span style="color:var(--warn)">${dd.top_11_20||0}</span></div><div style="font-size:9px;color:var(--muted);margin-top:2px">top3 \u00B7 4-10 \u00B7 11-20</div></div>
+</div>`;
+
+// Opportunités + Drops côte à côte
+if(hasData){
+const opps=si.top_opportunities||[];
+const drops=si.top_drops||[];
+h+=`<div style="display:grid;grid-template-columns:1fr 1fr;border-bottom:${(opps.length||drops.length)?'1px solid var(--border)':'none'}">`;
+
+// Opportunités
+h+=`<div style="padding:14px 18px;border-right:1px solid var(--border)">
+<div style="font-size:10px;color:var(--accent);text-transform:uppercase;font-weight:600;letter-spacing:.3px;margin-bottom:8px">Opportunités</div>`;
+if(opps.length){opps.forEach(o=>{
+h+=`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px"><span>${o.keyword}</span><span style="color:var(--warn);font-weight:600;font-family:var(--mono)">pos.${Math.round(o.position)}</span></div>`;
+});}else{h+=`<div style="font-size:11px;color:var(--muted)">Aucune</div>`;}
+h+=`</div>`;
+
+// Drops
+h+=`<div style="padding:14px 18px">
+<div style="font-size:10px;color:var(--danger);text-transform:uppercase;font-weight:600;letter-spacing:.3px;margin-bottom:8px">Baisses</div>`;
+if(drops.length){drops.forEach(d=>{
+h+=`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px"><span>${d.keyword}</span><span style="color:var(--danger);font-weight:600;font-family:var(--mono)">${Math.round(d.from)}\u2192${Math.round(d.to)}</span></div>`;
+});}else{h+=`<div style="font-size:11px;color:var(--muted)">Aucune</div>`;}
+h+=`</div></div>`;
+}
+
+h+=`</div>`; // fin card site
 });
 }
 

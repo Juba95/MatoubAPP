@@ -66,6 +66,37 @@ def list_sites(db: Session = Depends(get_db)):
             Keyword.site_id == s.id
         ).scalar()
 
+        # Distribution par site
+        kw_base = db.query(Keyword).filter(Keyword.site_id == s.id, Keyword.current_position.isnot(None))
+        kw_top3 = kw_base.filter(Keyword.current_position <= 3).count()
+        kw_4_10 = kw_base.filter(Keyword.current_position > 3, Keyword.current_position <= 10).count()
+        kw_11_20 = kw_base.filter(Keyword.current_position > 10, Keyword.current_position <= 20).count()
+
+        # Top 3 opportunités par site
+        site_opps = (
+            db.query(Keyword)
+            .filter(Keyword.site_id == s.id, Keyword.impressions > 10, Keyword.current_position > 10)
+            .order_by(Keyword.impressions.desc())
+            .limit(3)
+            .all()
+        )
+
+        # Top 3 drops par site
+        site_drops = (
+            db.query(Keyword)
+            .filter(
+                Keyword.site_id == s.id,
+                Keyword.current_position.isnot(None),
+                Keyword.previous_position.isnot(None),
+            )
+            .all()
+        )
+        drops = sorted(
+            [k for k in site_drops if k.current_position - (k.previous_position or k.current_position) >= 3],
+            key=lambda k: k.current_position - k.previous_position,
+            reverse=True,
+        )[:3]
+
         result.append({
             "id": s.id,
             "name": s.name,
@@ -83,6 +114,17 @@ def list_sites(db: Session = Depends(get_db)):
             "pending_actions": pending_actions or 0,
             "indexed_pages": s.indexed_pages or 0,
             "sc_connected": bool(s.sc_token_json),
+            "sc_property": s.sc_property,
+            "distribution": {"top_3": kw_top3, "top_4_10": kw_4_10, "top_11_20": kw_11_20},
+            "top_opportunities": [
+                {"keyword": k.keyword, "position": k.current_position, "impressions": k.impressions}
+                for k in site_opps
+            ],
+            "top_drops": [
+                {"keyword": k.keyword, "from": k.previous_position, "to": k.current_position,
+                 "delta": round(k.current_position - k.previous_position)}
+                for k in drops
+            ],
             "is_active": s.is_active,
         })
     return result
