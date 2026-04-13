@@ -10,6 +10,7 @@ from app.routers import (
     actions_router,
     generator_router,
     geoloc_router,
+    keywords_router,
 )
 
 app = FastAPI(
@@ -36,6 +37,7 @@ app.include_router(overview_router)
 app.include_router(actions_router)
 app.include_router(generator_router)
 app.include_router(geoloc_router)
+app.include_router(keywords_router)
 
 
 @app.on_event("startup")
@@ -54,4 +56,15 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    s = get_settings()
+    return {
+        "status": "ok",
+        "config": {
+            "database": bool(s.database_url),
+            "redis": bool(s.redis_url),
+            "anthropic": bool(s.anthropic_api_key),
+            "dataforseo": bool(s.dataforseo_login),
+            "gsc_oauth": bool(s.gsc_client_id and s.gsc_client_secret),
+            "encryption": bool(s.encryption_key),
+        }
+    }

@@ -6,6 +6,7 @@ from app.auth import get_current_user
 from app.models.site import Site
 from app.models.page import Page, PageStatus
 from app.models.action import Action, ActionStatus, ActionType
+from app.models.keyword import Keyword
 
 router = APIRouter(prefix="/overview", tags=["overview"], dependencies=[Depends(get_current_user)])
 
@@ -35,6 +36,36 @@ def get_overview(db: Session = Depends(get_db)):
         Action.action_type.in_([ActionType.CREATE, ActionType.GEOLOC]),
     ).scalar()
 
+    # Keyword position distribution
+    kw_base = db.query(Keyword).filter(Keyword.current_position.isnot(None))
+    total_keywords = kw_base.count()
+    kw_top_3 = kw_base.filter(Keyword.current_position <= 3).count()
+    kw_top_10 = kw_base.filter(Keyword.current_position <= 10).count()
+    kw_top_20 = kw_base.filter(Keyword.current_position <= 20).count()
+    kw_beyond = total_keywords - kw_top_20
+
+    # Top 5 opportunities across all sites
+    opportunities = (
+        db.query(Keyword, Site.domain)
+        .join(Site, Keyword.site_id == Site.id)
+        .filter(
+            Keyword.impressions > 20,
+            Keyword.current_position > 10,
+        )
+        .order_by(Keyword.impressions.desc())
+        .limit(5)
+        .all()
+    )
+    top_opportunities = [
+        {
+            "keyword": kw.keyword,
+            "impressions": kw.impressions or 0,
+            "position": kw.current_position,
+            "site_domain": domain,
+        }
+        for kw, domain in opportunities
+    ]
+
     return {
         "total_sites": total_sites or 0,
         "total_pages": total_pages or 0,
@@ -45,6 +76,14 @@ def get_overview(db: Session = Depends(get_db)):
         "pending_actions": pending_actions or 0,
         "pending_optimizations": optimize_count or 0,
         "pending_creations": create_count or 0,
+        "total_keywords": total_keywords,
+        "position_distribution": {
+            "top_3": kw_top_3,
+            "top_10": kw_top_10,
+            "top_20": kw_top_20,
+            "beyond": kw_beyond,
+        },
+        "top_opportunities": top_opportunities,
     }
 
 

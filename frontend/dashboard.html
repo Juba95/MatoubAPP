@@ -168,12 +168,37 @@ _openCfg=null;
 let ov,sites,actions;
 try{[ov,sites,actions]=await Promise.all([apiFetch('/overview/'),apiFetch('/sites/'),apiFetch('/actions/')]);}
 catch(e){document.getElementById('tab-0').innerHTML=`<div class="card" style="color:var(--danger)">Erreur chargement : ${e.message}</div>`;return;}
+const pd=ov.position_distribution||{};
 let h=`<div class="metrics">
 <div class="metric"><div class="metric-label">Sites actifs</div><div class="metric-val">${ov.total_sites}</div></div>
 <div class="metric"><div class="metric-label">Pages totales</div><div class="metric-val">${fmt(ov.total_pages)}</div></div>
 <div class="metric"><div class="metric-label">Position moy.</div><div class="metric-val">${ov.avg_position||'\u2014'}</div><div class="metric-sub">${deltaHtml(ov.position_delta)}</div></div>
-<div class="metric"><div class="metric-label">Actions en attente</div><div class="metric-val">${ov.pending_actions}</div><div class="metric-sub" style="font-size:11px;color:var(--muted)">${ov.pending_optimizations} optim. / ${ov.pending_creations} contenus</div></div>
+<div class="metric"><div class="metric-label">Mots-clés suivis</div><div class="metric-val">${fmt(ov.total_keywords||0)}</div></div>
 </div>`;
+
+// Distribution des positions
+if(ov.total_keywords>0){
+h+=`<div class="card mb-12"><div class="accent-title">Distribution des positions</div>
+<div class="metrics" style="margin-bottom:0">
+<div class="metric"><div class="metric-label">Top 3</div><div class="metric-val" style="color:var(--success)">${pd.top_3||0}</div></div>
+<div class="metric"><div class="metric-label">Top 10</div><div class="metric-val" style="color:#3b82f6">${pd.top_10||0}</div></div>
+<div class="metric"><div class="metric-label">Top 20</div><div class="metric-val" style="color:var(--warn)">${pd.top_20||0}</div></div>
+<div class="metric"><div class="metric-label">20+</div><div class="metric-val" style="color:var(--danger)">${pd.beyond||0}</div></div>
+</div></div>`;
+}
+
+// Top opportunités
+const opps=ov.top_opportunities||[];
+if(opps.length>0){
+h+=`<div class="card mb-12"><div class="accent-title">Top opportunités (impressions fortes, position faible)</div>`;
+opps.forEach(o=>{
+h+=`<div class="preview-row"><span style="font-weight:500">${o.keyword}</span><span class="preview-meta">${o.site_domain} \u2014 pos. ${Math.round(o.position)} \u2014 ${fmt(o.impressions)} impr.</span></div>`;
+});
+h+=`</div>`;
+}
+
+// Actions en attente
+h+=`<div class="metrics"><div class="metric"><div class="metric-label">Actions en attente</div><div class="metric-val">${ov.pending_actions}</div><div class="metric-sub" style="font-size:11px;color:var(--muted)">${ov.pending_optimizations} optim. / ${ov.pending_creations} contenus</div></div></div>`;
 
 h+=`<div class="flex-between mb-10"><div class="section-title">Mes sites</div><button class="btn2" onclick="toggleAddSite()">+ Ajouter</button></div>`;
 h+=`<div id="add-site-form" class="hidden"><div class="card grid2" style="gap:10px">

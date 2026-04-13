@@ -4,6 +4,7 @@ from app.routers.overview import router as overview_router
 from app.routers.actions import router as actions_router
 from app.routers.generator import router as generator_router
 from app.routers.geoloc import router as geoloc_router
+from app.routers.keywords import router as keywords_router
 
 __all__ = [
     "auth_router",
@@ -12,4 +13,5 @@ __all__ = [
     "actions_router",
     "generator_router",
     "geoloc_router",
+    "keywords_router",
 ]
