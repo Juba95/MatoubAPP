@@ -261,12 +261,20 @@ else{actions.forEach(a=>{
 const typeLabel=a.action_type==='optimize'?'Optimisation':a.action_type==='geoloc'?'Géoloc':'Nouveau';
 const typeColor=a.action_type==='optimize'?'var(--blue)':a.action_type==='create'?'var(--accent)':'var(--success)';
 const posInfo=a.current_position&&a.previous_position?`${Math.round(a.previous_position)} \u2192 ${Math.round(a.current_position)}`:'';
-h+=`<div class="card action-row">
+const isFailed=a.status==='failed';
+const isRunning=a.status==='executing'||a.status==='validated';
+const statusPill=isFailed?pillHtml('ÉCHEC','var(--danger)'):isRunning?pillHtml('EN COURS','var(--orange)'):'';
+const borderStyle=isFailed?'border-color:var(--danger)':isRunning?'border-color:var(--orange)':'';
+h+=`<div class="card action-row" style="${borderStyle}">
 <div style="flex:1">
-<div style="font-size:13px;font-weight:700;margin-bottom:3px">${a.keyword||a.title}</div>
-<div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.4">${a.description||''}</div>
+<div style="font-size:13px;font-weight:700;margin-bottom:3px">${a.keyword||a.title} ${statusPill}</div>
+<div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.4">${(a.description||'').split('\\nERREUR:')[0]}</div>
+${isFailed&&a.description&&a.description.includes('ERREUR:')?`<div style="font-size:11px;color:var(--danger);margin-bottom:8px;background:var(--card2);padding:8px;border-radius:6px;font-family:var(--mono);word-break:break-all">${a.description.split('ERREUR:').pop()}</div>`:''}
 <div class="flex-gap-8">${pillHtml(typeLabel,typeColor)}${a.search_volume>0?`<span style="font-size:10px;color:var(--muted)">vol. ${fmt(a.search_volume)}</span>`:''}${posInfo?`<span class="down" style="font-size:10px">${posInfo}</span>`:''}</div>
-<div style="display:flex;gap:6px;margin-top:10px"><button class="btn2 btn-sm" onclick="rejectAction(${a.id})">Rejeter</button><button class="btn-success" onclick="validateAction(${a.id})">Valider</button></div>
+<div style="display:flex;gap:6px;margin-top:10px">
+<button class="btn2 btn-sm" onclick="rejectAction(${a.id})">Rejeter</button>
+${isFailed?`<button class="btn-success" onclick="retryAction(${a.id})">Réessayer</button>`:`<button class="btn-success" onclick="validateAction(${a.id})">${isRunning?'En cours...':'Valider'}</button>`}
+</div>
 </div>
 <div class="action-score">${fmt(Math.round(a.impact_score))}</div>
 </div>`;});}
@@ -287,6 +295,7 @@ loadOverview();
 }
 
 async function validateAction(id){try{await apiFetch(`/actions/${id}/validate`,{method:'POST'});loadOverview();}catch(e){alert('Erreur validation : '+e.message);}}
+async function retryAction(id){try{await apiFetch(`/actions/${id}/retry`,{method:'POST'});loadOverview();}catch(e){alert('Erreur retry : '+e.message);}}
 async function rejectAction(id){try{await apiFetch(`/actions/${id}/reject`,{method:'POST'});loadOverview();}catch(e){alert('Erreur rejet : '+e.message);}}
 async function validateAll(ids){try{await apiFetch('/actions/validate-batch',{method:'POST',body:JSON.stringify(ids)});loadOverview();}catch(e){alert('Erreur batch : '+e.message);}}
 

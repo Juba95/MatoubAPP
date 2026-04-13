@@ -26,7 +26,7 @@ def list_actions(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
     else:
-        q = q.filter(Action.status.in_([ActionStatus.PENDING, ActionStatus.VALIDATED]))
+        q = q.filter(Action.status.in_([ActionStatus.PENDING, ActionStatus.VALIDATED, ActionStatus.EXECUTING, ActionStatus.FAILED]))
     if site_id:
         q = q.filter(Action.site_id == site_id)
     actions = q.order_by(desc(Action.impact_score)).limit(limit).all()
@@ -131,9 +131,16 @@ def _run_action_sync(action_id: int):
         action.status = ActionStatus.DONE
         action.executed_at = datetime.now(timezone.utc)
         db.commit()
-    except Exception:
+    except Exception as exc:
+        import traceback
+        error_msg = f"{type(exc).__name__}: {exc}"
+        print(f"[ACTION {action_id} FAILED] {error_msg}")
+        traceback.print_exc()
         try:
-            db.query(Action).filter(Action.id == action_id).update({"status": ActionStatus.FAILED})
+            a = db.query(Action).filter(Action.id == action_id).first()
+            if a:
+                a.status = ActionStatus.FAILED
+                a.description = (a.description or "") + f"\n\nERREUR: {error_msg}"
             db.commit()
         except Exception:
             pass
@@ -171,6 +178,30 @@ def validate_action(action_id: int, background_tasks: BackgroundTasks, db: Sessi
         "task_id": task_id,
         "mode": "celery" if task_id else "sync",
     }
+
+
+@router.post("/{action_id}/retry")
+def retry_action(action_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Réessayer une action échouée"""
+    action = db.query(Action).filter(Action.id == action_id).first()
+    if not action:
+        raise HTTPException(status_code=404, detail="Action not found")
+    # Nettoyer l'erreur de la description
+    if action.description and "\n\nERREUR:" in action.description:
+        action.description = action.description.split("\n\nERREUR:")[0]
+    action.status = ActionStatus.VALIDATED
+    action.validated_at = datetime.now(timezone.utc)
+    db.commit()
+
+    try:
+        from app.tasks import execute_action, get_publish_eta
+        site_config = db.query(SiteConfig).filter(SiteConfig.site_id == action.site_id).first()
+        eta = get_publish_eta(site_config)
+        task = execute_action.apply_async(args=[action_id], eta=eta)
+    except Exception:
+        background_tasks.add_task(_run_action_sync, action_id)
+
+    return {"message": "Action relancée"}
 
 
 @router.post("/validate-batch")
