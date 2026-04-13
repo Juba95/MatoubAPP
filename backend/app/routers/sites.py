@@ -81,6 +81,7 @@ def list_sites(db: Session = Depends(get_db)):
             "prev_avg_position": round(prev_avg_pos, 1) if prev_avg_pos else None,
             "position_delta": round((prev_avg_pos or 0) - (avg_pos or 0), 1) if avg_pos and prev_avg_pos else 0,
             "pending_actions": pending_actions or 0,
+            "indexed_pages": s.indexed_pages or 0,
             "sc_connected": bool(s.sc_token_json),
             "is_active": s.is_active,
         })

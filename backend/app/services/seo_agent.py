@@ -292,7 +292,8 @@ class SEOAgent:
                 results["new_content"] += 1
 
         # Mettre à jour les stats du site
-        site.last_scan_at = datetime.now(timezone.utc) if hasattr(site, 'last_scan_at') else None
+        site.indexed_pages = results.get("indexed_pages", 0)
+        site.last_scan_at = datetime.now(timezone.utc)
 
         self.db.commit()
         return results

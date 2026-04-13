@@ -34,6 +34,8 @@ def _migrate(eng):
         ("actions", "actual_api_cost", "FLOAT DEFAULT 0"),
         ("actions", "extra_data", "JSON"),
         ("sites", "sc_property", "VARCHAR(500)"),
+        ("sites", "indexed_pages", "INTEGER DEFAULT 0"),
+        ("sites", "last_scan_at", "TIMESTAMP WITH TIME ZONE"),
     ]
 
     with eng.connect() as conn:

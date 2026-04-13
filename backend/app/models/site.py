@@ -48,6 +48,10 @@ class Site(Base):
     db_user = Column(String(100))
     db_password = Column(EncryptedString)
 
+    # Stats (mises à jour par le scan)
+    indexed_pages = Column(Integer, default=0)
+    last_scan_at = Column(DateTime(timezone=True))
+
     # État
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

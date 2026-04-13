@@ -223,6 +223,7 @@ h+=`<div class="card site-row" id="site-row-${si.id}" onclick="toggleSiteConfig(
 <div style="font-size:11px;color:var(--muted)">${si.domain} \u2014 ${si.host_provider||'non config.'}</div>
 </div>
 <div class="site-stats">
+<div><b>${si.indexed_pages||0}</b> pages</div>
 <div><b>${si.total_keywords||0}</b> kw</div>
 <div><b>${si.avg_position||'\u2014'}</b> pos.</div>
 <div><b>${si.pending_actions}</b> actions</div>
