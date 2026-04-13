@@ -28,6 +28,7 @@ class Site(Base):
     # Search Console (1 compte par site)
     sc_email = Column(String(255))
     sc_token_json = Column(EncryptedString)
+    sc_property = Column(String(500))  # ex: "sc-domain:lepaviste-pro.fr" ou "https://www.lepaviste-pro.fr/"
 
     # Profil éditorial (anti-footprint contenu)
     editorial_tone = Column(String(50))  # journalistique, technique, conversationnel

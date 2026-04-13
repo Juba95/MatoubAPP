@@ -118,3 +118,28 @@ def gsc_callback(
 
     # Rediriger vers le dashboard avec un message de succès
     return RedirectResponse(url="/?gsc=ok")
+
+
+@router.get("/gsc/properties/{site_id}")
+def gsc_list_properties(site_id: int, db: Session = Depends(get_db), _: str = Depends(get_current_user)):
+    """Liste les propriétés Search Console disponibles sur le compte connecté."""
+    from app.services.search_console import SearchConsoleClient
+    site = db.query(Site).filter(Site.id == site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if not site.sc_token_json:
+        raise HTTPException(status_code=400, detail="GSC non connecté pour ce site")
+    sc = SearchConsoleClient(site)
+    properties = sc.list_properties()
+    return {"properties": properties, "current": site.sc_property}
+
+
+@router.post("/gsc/select/{site_id}")
+def gsc_select_property(site_id: int, data: dict, db: Session = Depends(get_db), _: str = Depends(get_current_user)):
+    """Sélectionne une propriété Search Console pour un site."""
+    site = db.query(Site).filter(Site.id == site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    site.sc_property = data.get("property")
+    db.commit()
+    return {"message": "Propriété GSC sélectionnée", "sc_property": site.sc_property}

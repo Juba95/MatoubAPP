@@ -327,11 +327,14 @@ panel.innerHTML=`<div class="cfg-panel">
 
 <div class="accent-title">Search Console</div>
 <div class="grid2 mb-16">
-<div><label>Email compte GSC</label><input id="cf-scemail-${id}" value="${si.sc_email||''}" placeholder="site@gmail.com"></div>
 <div style="display:flex;align-items:flex-end;gap:8px">
-${si.sc_connected?'<span class="pill" style="background:var(--success)18;color:var(--success)">GSC connecté</span>':'<button class="btn2 btn-sm" onclick="event.stopPropagation();connectGSC('+id+')">Connecter Google Search Console</button>'}
+${si.sc_connected
+?'<span class="pill" style="background:var(--success)18;color:var(--success)">GSC connecté</span> <button class="btn2 btn-sm" onclick="event.stopPropagation();loadGSCProperties('+id+')">Choisir propriété</button>'
+:'<button class="btn2 btn-sm" onclick="event.stopPropagation();connectGSC('+id+')">Connecter Google Search Console</button>'}
 </div>
+<div><label>Propriété GSC</label><div id="cf-gsc-prop-${id}" style="font-size:13px;color:var(--muted)">${si.sc_property||'Non sélectionnée'}</div></div>
 </div>
+<div id="gsc-props-${id}" class="hidden" style="margin-bottom:16px"></div>
 
 <div class="accent-title">Hébergement</div>
 <div class="grid2 mb-16">
@@ -437,6 +440,35 @@ setTimeout(()=>loadOverview(),2000);
 msgEl.style.color='var(--danger)';
 msgEl.textContent='Erreur scan : '+e.message;
 }
+}
+
+async function loadGSCProperties(siteId){
+const container=document.getElementById('gsc-props-'+siteId);
+container.classList.remove('hidden');
+container.innerHTML='<div style="font-size:12px;color:var(--muted)">Chargement des propriétés...</div>';
+try{
+const res=await apiFetch('/auth/gsc/properties/'+siteId);
+const props=res.properties||[];
+if(props.length===0){container.innerHTML='<div style="font-size:12px;color:var(--danger)">Aucune propriété trouvée sur ce compte Google</div>';return;}
+let ph='<div style="display:flex;flex-wrap:wrap;gap:6px">';
+props.forEach(p=>{
+const isCurrent=p.site_url===res.current;
+ph+=`<button class="btn2 btn-sm${isCurrent?' region-btn on':''}" onclick="event.stopPropagation();selectGSCProperty(${siteId},'${p.site_url.replace(/'/g,"\\'")}')">${p.site_url}</button>`;
+});
+ph+='</div>';
+container.innerHTML=ph;
+}catch(e){
+container.innerHTML='<div style="font-size:12px;color:var(--danger)">Erreur : '+e.message+'</div>';
+}
+}
+
+async function selectGSCProperty(siteId,prop){
+try{
+await apiFetch('/auth/gsc/select/'+siteId,{method:'POST',body:JSON.stringify({property:prop})});
+document.getElementById('cf-gsc-prop-'+siteId).textContent=prop;
+document.getElementById('cf-gsc-prop-'+siteId).style.color='var(--success)';
+document.getElementById('gsc-props-'+siteId).classList.add('hidden');
+}catch(e){alert('Erreur : '+e.message);}
 }
 
 async function connectGSC(siteId){

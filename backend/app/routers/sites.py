@@ -119,6 +119,7 @@ def get_site(site_id: int, db: Session = Depends(get_db)):
         "wp_seo_plugin": site.wp_seo_plugin,
         "sc_email": site.sc_email,
         "sc_connected": bool(site.sc_token_json),
+        "sc_property": site.sc_property,
         "editorial_tone": site.editorial_tone,
         "editorial_style": site.editorial_style,
         "avg_article_length": site.avg_article_length,

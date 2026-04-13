@@ -33,6 +33,7 @@ def _migrate(eng):
     migrations = [
         ("actions", "actual_api_cost", "FLOAT DEFAULT 0"),
         ("actions", "extra_data", "JSON"),
+        ("sites", "sc_property", "VARCHAR(500)"),
     ]
 
     with eng.connect() as conn:
