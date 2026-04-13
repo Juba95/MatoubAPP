@@ -77,10 +77,14 @@ def _run_action_sync(action_id: int):
     db = SessionLocal()
     try:
         action = db.query(Action).filter(Action.id == action_id).first()
-        if not action or action.status != ActionStatus.VALIDATED:
-            _log(action_id, "SKIP: action non trouvée ou pas en statut VALIDATED")
+        if not action:
+            _log(action_id, "ERROR: action non trouvée en BDD")
             return
-
+        _log(action_id, f"Statut actuel : {action.status}")
+        if action.status in (ActionStatus.DONE,):
+            _log(action_id, "SKIP: action déjà terminée")
+            return
+        # Accepter PENDING, VALIDATED, EXECUTING, FAILED pour le retry
         action.status = ActionStatus.EXECUTING
         db.commit()
 
@@ -236,8 +240,8 @@ def validate_action(action_id: int, background_tasks: BackgroundTasks, db: Sessi
     action = db.query(Action).filter(Action.id == action_id).first()
     if not action:
         raise HTTPException(status_code=404, detail="Action not found")
-    if action.status not in (ActionStatus.PENDING, ActionStatus.VALIDATED):
-        raise HTTPException(status_code=400, detail=f"Action is {action.status}, cannot validate")
+    if action.status == ActionStatus.DONE:
+        raise HTTPException(status_code=400, detail="Action déjà terminée")
     action.status = ActionStatus.VALIDATED
     action.validated_at = datetime.now(timezone.utc)
     db.commit()
