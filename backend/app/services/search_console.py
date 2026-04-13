@@ -12,7 +12,15 @@ class SearchConsoleClient:
     SEARCHANALYTICS_URL = "https://searchconsole.googleapis.com/webmasters/v3"
 
     def __init__(self, site: Site, proxy_url: str | None = None):
-        self.site_url = f"sc-domain:{site.domain}"
+        # Nettoyer le domaine : enlever https://, http://, www., et trailing /
+        domain = site.domain.strip()
+        for prefix in ("https://", "http://"):
+            if domain.startswith(prefix):
+                domain = domain[len(prefix):]
+        if domain.startswith("www."):
+            domain = domain[4:]
+        domain = domain.rstrip("/")
+        self.site_url = f"sc-domain:{domain}"
         self.token_data = json.loads(site.sc_token_json) if site.sc_token_json else None
         self.proxy_url = proxy_url or None
 

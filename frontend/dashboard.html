@@ -329,7 +329,7 @@ panel.innerHTML=`<div class="cfg-panel">
 <div class="grid2 mb-16">
 <div><label>Email compte GSC</label><input id="cf-scemail-${id}" value="${si.sc_email||''}" placeholder="site@gmail.com"></div>
 <div style="display:flex;align-items:flex-end;gap:8px">
-${si.sc_token_json?'<span class="pill" style="background:var(--success)18;color:var(--success)">GSC connecté</span>':'<button class="btn2 btn-sm" onclick="event.stopPropagation();connectGSC('+id+')">Connecter Google Search Console</button>'}
+${si.sc_connected?'<span class="pill" style="background:var(--success)18;color:var(--success)">GSC connecté</span>':'<button class="btn2 btn-sm" onclick="event.stopPropagation();connectGSC('+id+')">Connecter Google Search Console</button>'}
 </div>
 </div>
 
@@ -367,38 +367,32 @@ async function saveSiteConfig(id){
 const msgEl=document.getElementById('cfg-msg-'+id);
 msgEl.style.color='var(--muted)';
 msgEl.textContent='Sauvegarde...';
-
-const d={
-wp_admin_url:document.getElementById('cf-wpadmin-'+id).value||null,
-wp_username:document.getElementById('cf-wpuser-'+id).value||null,
-wp_seo_plugin:document.getElementById('cf-seoplug-'+id).value||null,
-sc_email:document.getElementById('cf-scemail-'+id).value||null,
-host_provider:document.getElementById('cf-host-'+id).value||null,
-host_ip:document.getElementById('cf-hostip-'+id).value||null,
-vps_location:document.getElementById('cf-vpslocale-'+id).value||null,
-niche:document.getElementById('cf-niche-'+id).value||null,
-editorial_tone:document.getElementById('cf-tone-'+id).value||null,
-avg_article_length:Number(document.getElementById('cf-artlen-'+id).value)||null,
-editorial_style:document.getElementById('cf-style-'+id).value||null,
-};
-
-// Ajouter les champs mot de passe seulement si remplis
-const wppass=document.getElementById('cf-wppass-'+id).value;
+try{
+const d={};
+const val=(elId)=>{const el=document.getElementById(elId);return el?el.value.trim():''};
+const set=(key,elId)=>{const v=val(elId);if(v)d[key]=v;};
+set('wp_admin_url','cf-wpadmin-'+id);
+set('wp_username','cf-wpuser-'+id);
+set('wp_seo_plugin','cf-seoplug-'+id);
+set('sc_email','cf-scemail-'+id);
+set('host_provider','cf-host-'+id);
+set('host_ip','cf-hostip-'+id);
+set('vps_location','cf-vpslocale-'+id);
+set('niche','cf-niche-'+id);
+set('editorial_tone','cf-tone-'+id);
+set('editorial_style','cf-style-'+id);
+const artLen=val('cf-artlen-'+id);
+if(artLen)d.avg_article_length=Number(artLen);
+const wppass=val('cf-wppass-'+id);
 if(wppass)d.wp_app_password=wppass;
-const sctoken=document.getElementById('cf-sctoken-'+id).value;
-if(sctoken)d.sc_token_json=sctoken;
-
-// Supprimer les nulls
-Object.keys(d).forEach(k=>{if(d[k]===null||d[k]==='')delete d[k];});
 
 const res=await apiFetch('/sites/'+id,{method:'PUT',body:JSON.stringify(d)});
-if(res.message){
 msgEl.style.color='var(--success)';
 msgEl.textContent='\u2713 Sauvegardé';
-setTimeout(()=>{msgEl.textContent='';},3000);
-}else{
+setTimeout(()=>{msgEl.textContent='';loadOverview();},1500);
+}catch(e){
 msgEl.style.color='var(--danger)';
-msgEl.textContent='Erreur lors de la sauvegarde';
+msgEl.textContent='Erreur : '+e.message;
 }
 }
 
@@ -406,6 +400,7 @@ async function testWP(id){
 const msgEl=document.getElementById('cfg-msg-'+id);
 msgEl.style.color='var(--muted)';
 msgEl.textContent='Test en cours...';
+try{
 const res=await apiFetch('/generator/test-connection/'+id,{method:'POST'});
 if(res.ok){
 msgEl.style.color='var(--success)';
@@ -413,6 +408,10 @@ msgEl.textContent='\u2713 Connexion WP OK (HTTP '+res.status_code+')';
 }else{
 msgEl.style.color='var(--danger)';
 msgEl.textContent='\u2717 Erreur : '+(res.error||'connexion impossible');
+}
+}catch(e){
+msgEl.style.color='var(--danger)';
+msgEl.textContent='\u2717 '+e.message;
 }
 }
 
@@ -422,12 +421,21 @@ msgEl.style.color='var(--muted)';
 msgEl.textContent='Scan SEO en cours...';
 try{
 const res=await apiFetch('/actions/scan/'+id,{method:'POST'});
-msgEl.style.color='var(--success)';
-msgEl.textContent=`\u2713 Scan terminé \u2014 ${res.optimizations||0} optim. / ${res.new_content||0} nouveaux contenus`;
-setTimeout(()=>loadOverview(),1500);
+const parts=[];
+if(res.keywords_synced)parts.push(res.keywords_synced+' mots-clés sync.');
+if(res.dataforseo_enriched)parts.push(res.dataforseo_enriched+' enrichis DataForSEO');
+if(res.optimizations)parts.push(res.optimizations+' optim.');
+if(res.new_content)parts.push(res.new_content+' nouveaux contenus');
+if(res.errors&&res.errors.length)parts.push(res.errors.length+' erreurs');
+msgEl.style.color=res.errors&&res.errors.length?'var(--warn)':'var(--success)';
+msgEl.textContent='\u2713 Scan terminé'+(parts.length?' \u2014 '+parts.join(', '):'');
+if(res.errors&&res.errors.length){
+msgEl.textContent+='\n'+res.errors.join('\n');
+}
+setTimeout(()=>loadOverview(),2000);
 }catch(e){
 msgEl.style.color='var(--danger)';
-msgEl.textContent='Erreur lors du scan';
+msgEl.textContent='Erreur scan : '+e.message;
 }
 }
 

@@ -105,7 +105,25 @@ def get_site(site_id: int, db: Session = Depends(get_db)):
     site = db.query(Site).filter(Site.id == site_id).first()
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
-    return site
+    return {
+        "id": site.id,
+        "name": site.name,
+        "domain": site.domain,
+        "niche": site.niche,
+        "host_provider": site.host_provider,
+        "host_ip": site.host_ip,
+        "vps_location": site.vps_location,
+        "wp_admin_url": site.wp_admin_url,
+        "wp_username": site.wp_username,
+        "wp_theme": site.wp_theme,
+        "wp_seo_plugin": site.wp_seo_plugin,
+        "sc_email": site.sc_email,
+        "sc_connected": bool(site.sc_token_json),
+        "editorial_tone": site.editorial_tone,
+        "editorial_style": site.editorial_style,
+        "avg_article_length": site.avg_article_length,
+        "is_active": site.is_active,
+    }
 
 
 @router.put("/{site_id}")
