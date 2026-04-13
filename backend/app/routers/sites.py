@@ -8,6 +8,7 @@ from app.auth import get_current_user
 from app.models.site import Site
 from app.models.page import Page, PageStatus
 from app.models.action import Action, ActionStatus
+from app.models.keyword import Keyword
 
 router = APIRouter(prefix="/sites", tags=["sites"], dependencies=[Depends(get_current_user)])
 
@@ -53,18 +54,16 @@ def list_sites(db: Session = Depends(get_db)):
         pending_actions = db.query(sqlfunc.count(Action.id)).filter(
             Action.site_id == s.id, Action.status == ActionStatus.PENDING
         ).scalar()
-        avg_pos = db.query(sqlfunc.avg(Page.avg_position)).filter(
-            Page.site_id == s.id, Page.avg_position.isnot(None)
+        # Position moyenne depuis les Keywords (pas les Pages)
+        avg_pos = db.query(sqlfunc.avg(Keyword.current_position)).filter(
+            Keyword.site_id == s.id, Keyword.current_position.isnot(None)
         ).scalar()
-        prev_avg_pos = db.query(sqlfunc.avg(Page.prev_position)).filter(
-            Page.site_id == s.id, Page.prev_position.isnot(None)
+        prev_avg_pos = db.query(sqlfunc.avg(Keyword.previous_position)).filter(
+            Keyword.site_id == s.id, Keyword.previous_position.isnot(None)
         ).scalar()
 
-        pages_updated = db.query(sqlfunc.count(Page.id)).filter(
-            Page.site_id == s.id, Page.status == PageStatus.UPDATED
-        ).scalar()
-        pages_pending = db.query(sqlfunc.count(Page.id)).filter(
-            Page.site_id == s.id, Page.status == PageStatus.PENDING
+        total_keywords = db.query(sqlfunc.count(Keyword.id)).filter(
+            Keyword.site_id == s.id
         ).scalar()
 
         result.append({
@@ -77,12 +76,12 @@ def list_sites(db: Session = Depends(get_db)):
             "wp_theme": s.wp_theme,
             "editorial_tone": s.editorial_tone,
             "total_pages": total_pages or 0,
+            "total_keywords": total_keywords or 0,
             "avg_position": round(avg_pos, 1) if avg_pos else None,
             "prev_avg_position": round(prev_avg_pos, 1) if prev_avg_pos else None,
             "position_delta": round((prev_avg_pos or 0) - (avg_pos or 0), 1) if avg_pos and prev_avg_pos else 0,
-            "pages_updated": pages_updated or 0,
-            "pages_pending": pages_pending or 0,
             "pending_actions": pending_actions or 0,
+            "sc_connected": bool(s.sc_token_json),
             "is_active": s.is_active,
         })
     return result

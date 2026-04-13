@@ -147,19 +147,30 @@ class SEOAgent:
             results["errors"].append(f"Search Console error: {str(e)}")
             return results
 
+        # Pages indexées
+        try:
+            idx = sc.get_indexed_pages()
+            results["indexed_pages"] = idx.get("indexed_estimate", 0)
+        except Exception:
+            results["indexed_pages"] = 0
+
         # Indexer les données actuelles par query
+        # Garder la MEILLEURE page par query (celle avec la meilleure position)
         current_by_query = {}
         for row in current_data:
             keys = row.get("keys", [])
             if len(keys) >= 2:
                 query, page = keys[0], keys[1]
-                current_by_query[query] = {
-                    "page": page,
-                    "position": row.get("position", 0),
-                    "impressions": row.get("impressions", 0),
-                    "clicks": row.get("clicks", 0),
-                    "ctr": row.get("ctr", 0),
-                }
+                pos = row.get("position", 0)
+                existing = current_by_query.get(query)
+                if existing is None or pos < existing["position"]:
+                    current_by_query[query] = {
+                        "page": page,
+                        "position": pos,
+                        "impressions": row.get("impressions", 0),
+                        "clicks": row.get("clicks", 0),
+                        "ctr": row.get("ctr", 0),
+                    }
 
         # Indexer les données précédentes
         previous_by_query = {}
@@ -167,10 +178,13 @@ class SEOAgent:
             keys = row.get("keys", [])
             if len(keys) >= 2:
                 query = keys[0]
-                previous_by_query[query] = {
-                    "position": row.get("position", 0),
-                    "impressions": row.get("impressions", 0),
-                }
+                pos = row.get("position", 0)
+                existing = previous_by_query.get(query)
+                if existing is None or pos < existing["position"]:
+                    previous_by_query[query] = {
+                        "position": pos,
+                        "impressions": row.get("impressions", 0),
+                    }
 
         # --- Step 1: Sync keywords to DB ---
         try:
@@ -245,9 +259,18 @@ class SEOAgent:
                     "estimated_api_cost": 0.03,
                 })
 
-        # Trier par impact et limiter
+        # Trier par impact et limiter — max 3 actions par page pour diversifier
         actions_to_create.sort(key=lambda a: a["impact_score"], reverse=True)
-        actions_to_create = actions_to_create[:max_actions]
+        page_counts = {}
+        diversified = []
+        for a in actions_to_create:
+            page_url = a.get("description", "").split("Page: ")[-1] if "Page: " in a.get("description", "") else ""
+            page_counts[page_url] = page_counts.get(page_url, 0) + 1
+            if page_counts[page_url] <= 3:
+                diversified.append(a)
+            if len(diversified) >= max_actions:
+                break
+        actions_to_create = diversified
 
         # Créer les actions en BDD
         for action_data in actions_to_create:
@@ -267,6 +290,9 @@ class SEOAgent:
                 results["optimizations"] += 1
             else:
                 results["new_content"] += 1
+
+        # Mettre à jour les stats du site
+        site.last_scan_at = datetime.now(timezone.utc) if hasattr(site, 'last_scan_at') else None
 
         self.db.commit()
         return results

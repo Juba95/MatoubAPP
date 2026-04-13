@@ -217,13 +217,13 @@ sites.forEach(si=>{
 const col=si.position_delta>0?'var(--success)':si.position_delta<-3?'var(--danger)':'var(--warn)';
 const label=si.position_delta>0?'+'+si.position_delta:si.position_delta<-3?si.position_delta+' pos.':'Stable';
 h+=`<div class="card site-row" id="site-row-${si.id}" onclick="toggleSiteConfig(${si.id})">
-<div class="site-dot" style="background:${col}"></div>
+<div class="site-dot" style="background:${si.sc_connected?col:'var(--muted)'}"></div>
 <div style="flex:1;min-width:0">
-<div style="font-size:14px;font-weight:500">${si.name}</div>
+<div style="font-size:14px;font-weight:500">${si.name}${si.sc_connected?'':' <span style="font-size:10px;color:var(--muted)">(GSC non connecté)</span>'}</div>
 <div style="font-size:11px;color:var(--muted)">${si.domain} \u2014 ${si.host_provider||'non config.'}</div>
 </div>
 <div class="site-stats">
-<div><b>${si.total_pages}</b> pages</div>
+<div><b>${si.total_keywords||0}</b> kw</div>
 <div><b>${si.avg_position||'\u2014'}</b> pos.</div>
 <div><b>${si.pending_actions}</b> actions</div>
 </div>
