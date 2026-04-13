@@ -113,6 +113,15 @@ class WPPublisher:
             resp.raise_for_status()
             return resp.json()
 
+    def get_content(self, post_id: int, content_type: str = "post") -> str:
+        """Récupère le contenu HTML d'un post ou d'une page."""
+        endpoint = "pages" if content_type == "page" else "posts"
+        with self._client() as client:
+            resp = client.get(f"{self.base_url}/{endpoint}/{post_id}")
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("content", {}).get("rendered", "")
+
     def list_posts(self, per_page: int = 100, page: int = 1) -> list:
         with self._client() as client:
             resp = client.get(

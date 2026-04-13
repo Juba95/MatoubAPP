@@ -108,7 +108,8 @@ def _run_action_sync(action_id: int):
         # Génération Claude
         claude = ClaudeContentService()
         publisher = WPPublisher(site, proxy_url=proxy_url)
-        wp_post_id = None  # sera rempli pour OPTIMIZE
+        wp_post_id = None
+        wp_type = "post"
 
         if action.action_type == ActionType.GEOLOC:
             _log(action_id, "Génération article géolocalisé via Claude...")
@@ -121,9 +122,11 @@ def _run_action_sync(action_id: int):
             # Récupérer le contenu actuel depuis WordPress
             current_content = ""
             wp_post_id = None
+            wp_type = "post"  # post ou page
 
             if action.page_id and action.page and action.page.wp_post_id:
                 wp_post_id = action.page.wp_post_id
+                _log(action_id, f"Page liée en BDD : WP #{wp_post_id}")
             elif action.description and "Page: " in action.description:
                 import re
                 url_match = re.search(r'Page:\s*(https?://[^\s]+)', action.description)
@@ -131,24 +134,30 @@ def _run_action_sync(action_id: int):
                     page_url = url_match.group(1).rstrip("/")
                     slug = page_url.split("/")[-1]
                     if slug:
-                        _log(action_id, f"Recherche page WP par slug : {slug}")
+                        _log(action_id, f"Recherche WP par slug : {slug}")
                         wp_found = publisher.find_post_by_slug(slug)
                         if wp_found:
                             wp_post_id = wp_found["wp_post_id"]
-                            _log(action_id, f"Trouvé : WP #{wp_post_id} ({wp_found['type']})")
+                            wp_type = wp_found["type"]
+                            _log(action_id, f"Trouvé : WP #{wp_post_id} (type: {wp_type})")
+                        else:
+                            _log(action_id, f"Slug '{slug}' non trouvé")
 
             if wp_post_id:
-                _log(action_id, f"Récupération du contenu actuel (WP #{wp_post_id})...")
+                _log(action_id, f"Récupération du contenu actuel...")
                 try:
-                    post_data = publisher.get_post(wp_post_id)
-                    current_content = post_data.get("content", {}).get("rendered", "")
-                    _log(action_id, f"Contenu actuel récupéré ({len(current_content)} chars)")
+                    current_content = publisher.get_content(wp_post_id, wp_type)
+                    _log(action_id, f"Contenu actuel : {len(current_content)} chars")
                 except Exception as e:
-                    _log(action_id, f"Erreur récupération contenu : {e}")
+                    _log(action_id, f"Erreur récupération : {e}")
 
-            _log(action_id, f"Optimisation via Claude (keyword: {action.keyword}, pos: {action.current_position})...")
-            result = claude.optimize_page(site, keyword=action.keyword,
-                current_content=current_content, current_position=action.current_position or 0)
+            if not current_content or len(current_content) < 50:
+                _log(action_id, "WARN: contenu actuel vide ou trop court — génération d'un nouvel article")
+                result = claude.generate_article(site, action.keyword)
+            else:
+                _log(action_id, f"Optimisation via Claude (keyword: {action.keyword}, pos: {action.current_position})...")
+                result = claude.optimize_page(site, keyword=action.keyword,
+                    current_content=current_content, current_position=action.current_position or 0)
 
         else:
             _log(action_id, "Génération nouvel article via Claude...")
@@ -176,20 +185,18 @@ def _run_action_sync(action_id: int):
         _log(action_id, f"Publication sur WordPress ({site.domain})...")
 
         if action.action_type == ActionType.OPTIMIZE and wp_post_id:
-            # Mettre à jour la page existante
-            try:
-                wp_result = publisher.update_post(post_id=wp_post_id,
-                    content=action.generated_content,
-                    meta_title=action.generated_meta_title, meta_description=action.generated_meta_description)
-                _log(action_id, f"SUCCESS: Page WP #{wp_post_id} mise à jour")
-            except Exception:
-                # Peut-être une page WP (pas un post) — essayer update_page
+            # Mettre à jour la page/post existant selon le type
+            if wp_type == "page":
                 wp_result = publisher.update_page(page_id=wp_post_id,
                     content=action.generated_content,
                     meta_title=action.generated_meta_title, meta_description=action.generated_meta_description)
-                _log(action_id, f"SUCCESS: Page WP #{wp_post_id} mise à jour (type page)")
+            else:
+                wp_result = publisher.update_post(post_id=wp_post_id,
+                    content=action.generated_content,
+                    meta_title=action.generated_meta_title, meta_description=action.generated_meta_description)
+            _log(action_id, f"SUCCESS: {wp_type} WP #{wp_post_id} mise à jour")
             if changes:
-                _log(action_id, f"Résumé : {changes}")
+                _log(action_id, f"Modifications : {changes}")
         elif action.action_type == ActionType.OPTIMIZE:
             _log(action_id, "WARN: Page non trouvée sur WP — création d'un brouillon")
             wp_result = publisher.create_post(title=content_data.get("title", action.title),
