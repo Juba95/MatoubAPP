@@ -125,19 +125,14 @@ class SearchConsoleClient:
             return resp.json().get("rows", [])
 
     def get_indexed_pages(self) -> dict:
-        """Nombre de pages indexées via l'API d'inspection"""
-        with self._client() as client:
-            resp = client.get(
-                f"{self.API_URL}/sites/{self.site_url}/sitemaps",
-            )
-            resp.raise_for_status()
-            sitemaps = resp.json().get("sitemap", [])
-            total = sum(
-                int(s.get("contents", [{}])[0].get("submitted", 0))
-                for s in sitemaps
-                if s.get("contents")
-            )
-            return {"indexed_estimate": total, "sitemaps": len(sitemaps)}
+        """Nombre de pages avec du trafic SC (plus fiable que l'API sitemaps)"""
+        pages = self.get_performance(days=28, dimensions=["page"], row_limit=5000)
+        unique_pages = set()
+        for row in pages:
+            keys = row.get("keys", [])
+            if keys:
+                unique_pages.add(keys[0])
+        return {"indexed_estimate": len(unique_pages)}
 
     def list_properties(self) -> list[dict]:
         """Liste toutes les propriétés Search Console du compte connecté."""

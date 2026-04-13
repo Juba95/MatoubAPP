@@ -1,13 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from datetime import datetime, timezone
 from typing import Optional
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.auth import get_current_user
 from app.models.action import Action, ActionStatus, ActionType
 from app.models.site import SiteConfig
-from app.tasks import execute_action, get_publish_eta
 
 router = APIRouter(prefix="/actions", tags=["actions"], dependencies=[Depends(get_current_user)])
 
@@ -55,8 +54,95 @@ def list_actions(
     ]
 
 
+def _run_action_sync(action_id: int):
+    """Exécute une action en mode synchrone (sans Celery)."""
+    from app.tasks import _parse_claude_json
+    from app.models.page import Page, PageType, PageStatus
+    from app.models.site import Site, SiteConfig as SC
+    from app.services.claude_content import ClaudeContentService
+    from app.services.wp_publisher import WPPublisher
+    import json
+
+    db = SessionLocal()
+    try:
+        action = db.query(Action).filter(Action.id == action_id).first()
+        if not action or action.status != ActionStatus.VALIDATED:
+            return
+
+        action.status = ActionStatus.EXECUTING
+        db.commit()
+
+        site = db.query(Site).filter(Site.id == action.site_id).first()
+        if not site:
+            action.status = ActionStatus.FAILED
+            db.commit()
+            return
+
+        sc = db.query(SC).filter(SC.site_id == site.id).first()
+        proxy_url = sc.proxy_url if sc else None
+        claude = ClaudeContentService()
+
+        # Génération
+        if action.action_type == ActionType.GEOLOC:
+            extra = action.extra_data or {}
+            result = claude.generate_geoloc_article(site, keyword=action.keyword,
+                city=extra.get("city",""), department=extra.get("department",""),
+                postal_code=extra.get("postal_code",""), region=extra.get("region",""))
+        elif action.action_type == ActionType.OPTIMIZE and action.page_id and action.page:
+            result = claude.optimize_page(site, keyword=action.keyword,
+                current_content=action.page.content or "", current_position=action.current_position or 0)
+        else:
+            result = claude.generate_article(site, action.keyword)
+
+        raw = result["raw"]
+        content_data = _parse_claude_json(raw)
+
+        usage = result.get("usage")
+        if usage and hasattr(usage, "input_tokens"):
+            action.actual_api_cost = round((usage.input_tokens/1e6)*3 + (usage.output_tokens/1e6)*15, 6)
+
+        action.generated_content = content_data.get("content", raw)
+        action.generated_meta_title = content_data.get("meta_title", "")
+        action.generated_meta_description = content_data.get("meta_description", "")
+
+        # Publication WP
+        publisher = WPPublisher(site, proxy_url=proxy_url)
+        if action.action_type == ActionType.OPTIMIZE and action.page_id and action.page and action.page.wp_post_id:
+            wp_result = publisher.update_post(post_id=action.page.wp_post_id,
+                title=content_data.get("title", action.title), content=action.generated_content,
+                meta_title=action.generated_meta_title, meta_description=action.generated_meta_description)
+            action.page.content = action.generated_content
+            action.page.status = PageStatus.UPDATED
+        else:
+            wp_result = publisher.create_post(title=content_data.get("title", action.title),
+                content=action.generated_content, slug=content_data.get("slug",""), status="draft",
+                meta_title=action.generated_meta_title, meta_description=action.generated_meta_description)
+            extra = action.extra_data or {}
+            page_type = PageType.GEOLOC if action.action_type == ActionType.GEOLOC else PageType.CONTENT
+            page = Page(site_id=site.id, wp_post_id=wp_result["wp_post_id"],
+                title=content_data.get("title", action.title), slug=content_data.get("slug",""),
+                url=wp_result.get("url",""), content=action.generated_content,
+                meta_title=action.generated_meta_title, meta_description=action.generated_meta_description,
+                page_type=page_type, status=PageStatus.DRAFT,
+                city=extra.get("city"), department=extra.get("department"),
+                postal_code=extra.get("postal_code"), region=extra.get("region"))
+            db.add(page)
+
+        action.status = ActionStatus.DONE
+        action.executed_at = datetime.now(timezone.utc)
+        db.commit()
+    except Exception:
+        try:
+            db.query(Action).filter(Action.id == action_id).update({"status": ActionStatus.FAILED})
+            db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
 @router.post("/{action_id}/validate")
-def validate_action(action_id: int, db: Session = Depends(get_db)):
+def validate_action(action_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Valider une action — déclenche la génération de contenu"""
     action = db.query(Action).filter(Action.id == action_id).first()
     if not action:
@@ -67,27 +153,28 @@ def validate_action(action_id: int, db: Session = Depends(get_db)):
     action.validated_at = datetime.now(timezone.utc)
     db.commit()
 
-    # Lancer le task Celery — si Redis/Celery est down, on valide quand même
+    # Tenter Celery, sinon fallback sur BackgroundTasks (synchrone dans le process)
     task_id = None
-    eta = None
     try:
+        from app.tasks import execute_action, get_publish_eta
         site_config = db.query(SiteConfig).filter(SiteConfig.site_id == action.site_id).first()
         eta = get_publish_eta(site_config)
         task = execute_action.apply_async(args=[action_id], eta=eta)
         task_id = task.id
     except Exception:
-        pass  # Celery down — l'action est validée, le task sera relancé manuellement
+        # Celery/Redis down → exécuter directement via FastAPI BackgroundTasks
+        background_tasks.add_task(_run_action_sync, action_id)
 
     return {
-        "message": "Action validated",
+        "message": "Action validated — génération en cours",
         "id": action.id,
         "task_id": task_id,
-        "scheduled_at": eta.isoformat() if eta else "immediate",
+        "mode": "celery" if task_id else "sync",
     }
 
 
 @router.post("/validate-batch")
-def validate_batch(action_ids: list[int], db: Session = Depends(get_db)):
+def validate_batch(action_ids: list[int], background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Valider plusieurs actions d'un coup"""
     now = datetime.now(timezone.utc)
     count = 0
@@ -114,6 +201,7 @@ def validate_batch(action_ids: list[int], db: Session = Depends(get_db)):
     db.commit()
 
     try:
+        from app.tasks import execute_action, get_publish_eta
         for aid in action_ids:
             action = db.query(Action).filter(Action.id == aid).first()
             if action and action.status == ActionStatus.VALIDATED:
@@ -121,7 +209,9 @@ def validate_batch(action_ids: list[int], db: Session = Depends(get_db)):
                 task = execute_action.apply_async(args=[aid], eta=eta)
                 task_ids.append(task.id)
     except Exception:
-        pass  # Celery down
+        # Celery down → mode sync
+        for aid in action_ids:
+            background_tasks.add_task(_run_action_sync, aid)
 
     return {"message": f"{count} actions validated", "task_ids": task_ids}
 
