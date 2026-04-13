@@ -295,7 +295,29 @@ loadOverview();
 }catch(e){alert('Erreur : '+(e.message||'impossible de créer le site'));}
 }
 
-async function validateAction(id){try{await apiFetch(`/actions/${id}/validate`,{method:'POST'});loadOverview();}catch(e){alert('Erreur validation : '+e.message);}}
+async function validateAction(id){
+try{
+await apiFetch(`/actions/${id}/validate`,{method:'POST'});
+// Afficher les logs automatiquement au lieu de recharger la page
+const logsEl=document.getElementById('action-logs-'+id);
+if(logsEl){
+logsEl.innerHTML='<div class="log-box" style="margin-top:8px"><div class="log-ok">Démarrage...</div></div>';
+const poll=setInterval(async()=>{
+try{
+const d=await apiFetch(`/actions/logs/${id}`);
+let lh='<div class="log-box" style="margin-top:8px">';
+(d.logs||[]).forEach(l=>{
+const cls=l.startsWith('ERROR')?'log-err':l.startsWith('SUCCESS')||l.startsWith('DONE')?'log-win':l.startsWith('WARN')?'log-err':'log-ok';
+lh+=`<div class="${cls}">${l}</div>`;
+});
+lh+='</div>';
+logsEl.innerHTML=lh;
+if(d.logs?.some(l=>l==='DONE'||l.startsWith('ERROR'))){clearInterval(poll);setTimeout(()=>loadOverview(),3000);}
+}catch(e){clearInterval(poll);loadOverview();}
+},1500);
+} else {loadOverview();}
+}catch(e){alert('Erreur validation : '+e.message);}
+}
 async function retryAction(id){try{await apiFetch(`/actions/${id}/retry`,{method:'POST'});loadOverview();}catch(e){alert('Erreur retry : '+e.message);}}
 
 function showActionLogs(id){
