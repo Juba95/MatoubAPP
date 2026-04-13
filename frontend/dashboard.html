@@ -350,7 +350,7 @@ panel.innerHTML=`<div class="cfg-panel">
 <div class="grid2 mb-16">
 <div style="display:flex;align-items:flex-end;gap:8px">
 ${si.sc_connected
-?`${pillHtml('Connecté','var(--success)')} <button class="btn2 btn-sm" onclick="event.stopPropagation();loadGSCProperties(${id})">Choisir propriété</button>`
+?`${pillHtml('Connecté','var(--success)')} <button class="btn2 btn-sm" onclick="event.stopPropagation();loadGSCProperties(${id})">Choisir propriété</button> <button class="btn2 btn-sm" onclick="event.stopPropagation();connectGSC(${id})">Reconnecter</button>`
 :`<button class="btn2 btn-sm" onclick="event.stopPropagation();connectGSC(${id})">Connecter GSC</button>`}
 </div>
 <div><label>Propriété GSC</label><div id="cf-gsc-prop-${id}" style="font-size:12px;color:${si.sc_property?'var(--success)':'var(--muted)'}">${si.sc_property||'Non sélectionnée'}</div></div>
