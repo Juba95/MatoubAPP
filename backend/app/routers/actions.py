@@ -27,7 +27,7 @@ def list_actions(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
     else:
-        q = q.filter(Action.status == ActionStatus.PENDING)
+        q = q.filter(Action.status.in_([ActionStatus.PENDING, ActionStatus.VALIDATED]))
     if site_id:
         q = q.filter(Action.site_id == site_id)
     actions = q.order_by(desc(Action.impact_score)).limit(limit).all()
@@ -61,8 +61,8 @@ def validate_action(action_id: int, db: Session = Depends(get_db)):
     action = db.query(Action).filter(Action.id == action_id).first()
     if not action:
         raise HTTPException(status_code=404, detail="Action not found")
-    if action.status != ActionStatus.PENDING:
-        raise HTTPException(status_code=400, detail=f"Action is {action.status}, not pending")
+    if action.status not in (ActionStatus.PENDING, ActionStatus.VALIDATED):
+        raise HTTPException(status_code=400, detail=f"Action is {action.status}, cannot validate")
     action.status = ActionStatus.VALIDATED
     action.validated_at = datetime.now(timezone.utc)
     db.commit()
