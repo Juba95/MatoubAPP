@@ -180,6 +180,26 @@ def update_site(site_id: int, data: SiteUpdate, db: Session = Depends(get_db)):
     return {"message": "Updated"}
 
 
+@router.get("/{site_id}/debug-index")
+def debug_index(site_id: int, db: Session = Depends(get_db)):
+    """Debug : voir ce que l'API sitemaps renvoie pour ce site"""
+    from app.services.search_console import SearchConsoleClient
+    site = db.query(Site).filter(Site.id == site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if not site.sc_token_json:
+        return {"error": "GSC non connecté"}
+    sc = SearchConsoleClient(site)
+    try:
+        with sc._client() as client:
+            resp = client.get(f"{sc.API_URL}/sites/{sc.site_url}/sitemaps")
+            raw = resp.json()
+    except Exception as e:
+        raw = {"error": str(e)}
+    idx = sc.get_indexed_pages()
+    return {"site_url_encoded": sc.site_url, "sitemaps_raw": raw, "result": idx}
+
+
 @router.delete("/{site_id}")
 def delete_site(site_id: int, db: Session = Depends(get_db)):
     site = db.query(Site).filter(Site.id == site_id).first()

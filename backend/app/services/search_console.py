@@ -126,22 +126,29 @@ class SearchConsoleClient:
 
     def get_indexed_pages(self) -> dict:
         """Nombre de pages indexées via l'API sitemaps GSC."""
-        with self._client() as client:
-            resp = client.get(f"{self.API_URL}/sites/{self.site_url}/sitemaps")
-            resp.raise_for_status()
-            sitemaps = resp.json().get("sitemap", [])
-            total_indexed = 0
-            total_submitted = 0
-            for s in sitemaps:
-                for content in s.get("contents", []):
-                    total_submitted += int(content.get("submitted", 0))
-                    total_indexed += int(content.get("indexed", 0))
-            # Si les sitemaps retournent des données, on les utilise
-            if total_indexed > 0 or total_submitted > 0:
-                return {"indexed": total_indexed, "submitted": total_submitted}
-        # Fallback : compter les pages uniques avec impressions sur 28j
-        pages = self.get_performance(days=28, dimensions=["page"], row_limit=5000)
-        return {"indexed": len(set(row["keys"][0] for row in pages if row.get("keys"))), "submitted": 0}
+        try:
+            with self._client() as client:
+                resp = client.get(f"{self.API_URL}/sites/{self.site_url}/sitemaps")
+                resp.raise_for_status()
+                raw = resp.json()
+                sitemaps = raw.get("sitemap", [])
+                total_indexed = 0
+                total_submitted = 0
+                for s in sitemaps:
+                    for content in s.get("contents", []):
+                        total_submitted += int(content.get("submitted", 0))
+                        total_indexed += int(content.get("indexed", 0))
+                if total_indexed > 0 or total_submitted > 0:
+                    return {"indexed": total_indexed, "submitted": total_submitted, "source": "sitemaps"}
+        except Exception as e:
+            print(f"[GSC SITEMAPS ERROR] {e}")
+        # Fallback : compter les pages uniques avec impressions
+        try:
+            pages = self.get_performance(days=28, dimensions=["page"], row_limit=5000)
+            count = len(set(row["keys"][0] for row in pages if row.get("keys")))
+            return {"indexed": count, "submitted": 0, "source": "analytics_fallback"}
+        except Exception:
+            return {"indexed": 0, "submitted": 0, "source": "error"}
 
     def list_properties(self) -> list[dict]:
         """Liste toutes les propriétés Search Console du compte connecté."""
