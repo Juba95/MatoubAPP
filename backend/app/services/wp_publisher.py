@@ -122,6 +122,48 @@ class WPPublisher:
             resp.raise_for_status()
             return resp.json()
 
+    def find_post_by_slug(self, slug: str) -> dict | None:
+        """Cherche un post/page publié par son slug."""
+        with self._client() as client:
+            # Chercher dans les posts
+            resp = client.get(f"{self.base_url}/posts", params={"slug": slug, "status": "publish,draft"})
+            resp.raise_for_status()
+            posts = resp.json()
+            if posts:
+                return {"wp_post_id": posts[0]["id"], "url": posts[0]["link"], "type": "post"}
+            # Chercher dans les pages
+            resp = client.get(f"{self.base_url}/pages", params={"slug": slug, "status": "publish,draft"})
+            resp.raise_for_status()
+            pages = resp.json()
+            if pages:
+                return {"wp_post_id": pages[0]["id"], "url": pages[0]["link"], "type": "page"}
+        return None
+
+    def update_page(self, page_id: int, title: str = "", content: str = "",
+                    meta_title: str = "", meta_description: str = "") -> dict:
+        """Mettre à jour une page WordPress (pas un post)."""
+        payload = {}
+        if title:
+            payload["title"] = title
+        if content:
+            payload["content"] = content
+        meta = {}
+        if meta_title:
+            meta["yoast_wpseo_title"] = meta_title
+            meta["rank_math_title"] = meta_title
+            meta["_seopress_titles_title"] = meta_title
+        if meta_description:
+            meta["yoast_wpseo_metadesc"] = meta_description
+            meta["rank_math_description"] = meta_description
+            meta["_seopress_titles_desc"] = meta_description
+        if meta:
+            payload["meta"] = meta
+        with self._client() as client:
+            resp = client.post(f"{self.base_url}/pages/{page_id}", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            return {"wp_post_id": data["id"], "url": data["link"], "status": data["status"]}
+
     def create_category(self, name: str, slug: str = "") -> dict:
         with self._client() as client:
             payload = {"name": name}
