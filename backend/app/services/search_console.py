@@ -1,6 +1,7 @@
 import httpx
 import json
 from datetime import datetime, timedelta
+from urllib.parse import quote
 from app.models.site import Site
 
 
@@ -16,7 +17,7 @@ class SearchConsoleClient:
         self.proxy_url = proxy_url or None
         # Utiliser sc_property si défini, sinon construire depuis le domaine
         if hasattr(site, 'sc_property') and site.sc_property:
-            self.site_url = site.sc_property
+            self.site_url = quote(site.sc_property, safe='')
         else:
             domain = site.domain.strip()
             for prefix in ("https://", "http://"):
@@ -25,7 +26,7 @@ class SearchConsoleClient:
             if domain.startswith("www."):
                 domain = domain[4:]
             domain = domain.rstrip("/")
-            self.site_url = f"sc-domain:{domain}"
+            self.site_url = quote(f"sc-domain:{domain}", safe='')
 
     def _get_access_token(self) -> str:
         """Refresh le token OAuth"""
