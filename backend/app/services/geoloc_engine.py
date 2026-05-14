@@ -280,18 +280,31 @@ Réponds UNIQUEMENT en JSON valide."""
                 text = text.replace(placeholder, value)
             return text
 
-        # Build maillage (internal links)
+        # Build maillage (internal links) — villes les plus proches par distance
         import random
+        from math import radians, sin, cos, sqrt, atan2
 
-        nearby = [
-            c for c in all_cities
-            if c["department"] == city["department"] and c["name"] != city["name"]
-        ][:8]
-        if len(nearby) < 4:
-            nearby = [c for c in all_cities if c["name"] != city["name"]][:8]
+        def _haversine(lat1, lon1, lat2, lon2):
+            R = 6371
+            dlat, dlon = radians(lat2 - lat1), radians(lon2 - lon1)
+            a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+            return R * 2 * atan2(sqrt(a), sqrt(1 - a))
+
+        city_lat = city.get("lat", 0)
+        city_lng = city.get("lng", 0)
+        if city_lat and city_lng:
+            # Trier par distance haversine
+            candidates = [c for c in all_cities if c["name"] != city["name"] and c.get("lat") and c.get("lng")]
+            candidates.sort(key=lambda c: _haversine(city_lat, city_lng, c["lat"], c["lng"]))
+            nearby = candidates[:12]
+        else:
+            nearby = [c for c in all_cities if c["department"] == city["department"] and c["name"] != city["name"]][:12]
+
+        # Prendre 6-8 villes parmi les plus proches avec un peu de randomisation
+        selected = nearby[:4] + random.sample(nearby[4:12], min(4, len(nearby[4:12]))) if len(nearby) > 4 else nearby
 
         maillage_links = []
-        for nc in nearby[:6]:
+        for nc in selected[:8]:
             slug_base = ctx.get("slug_base", "service")
             anchor_pool = [a.replace("{ville}", nc["name"]) for a in anchors] if anchors else [nc["name"]]
             anchor = random.choice(anchor_pool) if anchor_pool else nc["name"]

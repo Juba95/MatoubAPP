@@ -19,7 +19,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/geoloc", tags=["geoloc"], dependencies=[Depends(get_current_user)])
 
-VILLES_CSV = os.path.join(os.path.dirname(__file__), "..", "..", "villes_france.csv")
+# Utiliser le CSV premium s'il existe, sinon fallback sur l'ancien
+_candidates = [
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "villes_france_premium.csv"),  # dev local
+    os.path.join(os.path.dirname(__file__), "..", "..", "data", "villes_france_premium.csv"),        # Docker /app/data/
+    "/app/data/villes_france_premium.csv",                                                           # Docker absolu
+]
+_csv_legacy = os.path.join(os.path.dirname(__file__), "..", "..", "villes_france.csv")
+VILLES_CSV = next((p for p in _candidates if os.path.exists(p)), _csv_legacy)
 
 # Mapping département → région
 DEPT_TO_REGION = {
