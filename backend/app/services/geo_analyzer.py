@@ -129,15 +129,19 @@ class GEOAnalyzer:
         }]
 
         # A. LLM Mentions Search (Google AIO + ChatGPT)
+        print(f"[GEO] Analysing domain: '{domain}' — target: {dfs_target}")
         google_mentions = self._fetch_llm_mentions_search(dfs_target, "google")
         chatgpt_mentions = self._fetch_llm_mentions_search(dfs_target, "chat_gpt")
         all_mention_items = google_mentions + chatgpt_mentions
+        print(f"[GEO] Mentions: google={len(google_mentions)}, chatgpt={len(chatgpt_mentions)}, total={len(all_mention_items)}")
 
         # B. LLM Mentions Aggregated Metrics
         agg_metrics = self._fetch_llm_aggregated_metrics(dfs_target)
+        print(f"[GEO] Aggregated metrics: {agg_metrics is not None} — total_count={agg_metrics.get('total_count', 0) if agg_metrics else 'N/A'}")
 
         # C. LLM Mentions Top Pages
         top_pages_data = self._fetch_llm_top_pages(dfs_target)
+        print(f"[GEO] Top pages: {len(top_pages_data)}")
 
         # --- Build top_questions ---
         for item in all_mention_items:
@@ -313,16 +317,25 @@ class GEOAnalyzer:
             }],
         )
         if not data:
+            print(f"[DFS] LLM mentions search ({platform}): no data returned")
             return []
         try:
             tasks = data.get("tasks", [])
             if not tasks:
+                print(f"[DFS] LLM mentions search ({platform}): no tasks")
                 return []
-            result_list = tasks[0].get("result", [])
+            task = tasks[0]
+            print(f"[DFS] LLM mentions search ({platform}): task status={task.get('status_code')}, msg={task.get('status_message')}, result_count={task.get('result_count')}")
+            result_list = task.get("result", [])
             if not result_list:
+                print(f"[DFS] LLM mentions search ({platform}): result is empty/null")
                 return []
-            return result_list[0].get("items", []) or []
-        except Exception:
+            items = result_list[0].get("items", []) or []
+            total = result_list[0].get("total_count", 0)
+            print(f"[DFS] LLM mentions search ({platform}): total_count={total}, items={len(items)}")
+            return items
+        except Exception as e:
+            print(f"[DFS] LLM mentions search ({platform}): exception {e}")
             return []
 
     def _fetch_llm_aggregated_metrics(self, target: list[dict]) -> dict | None:
