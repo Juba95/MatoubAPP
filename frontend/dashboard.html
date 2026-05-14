@@ -904,84 +904,278 @@ document.getElementById('geo-result').innerHTML=h;
 }
 
 // GENERATOR
+let _genPollInterval=null;
+
 async function loadGenerator(){
-document.getElementById('tab-2').innerHTML=`
-<div class="section-title mb-12">Générateur WordPress</div>
-<div class="card">
-<div class="accent-title">Site à installer</div>
-<div class="grid2 mb-16">
-<div><label>Domaine</label><input id="g-domain" placeholder="monsite.fr"></div>
-<div><label>Nom du site</label><input id="g-sitename" placeholder="Mon Site"></div>
+const stepStyle=`style="border:1px solid var(--border);border-radius:var(--radius);margin-bottom:12px;overflow:hidden"`;
+const stepHead=`style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;cursor:pointer;user-select:none;background:var(--card);transition:background .15s"`;
+const stepBody=`style="padding:18px 22px;background:var(--card);border-top:1px solid var(--border)"`;
+const stepNum=`style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;font-weight:700;margin-right:10px;flex-shrink:0"`;
+const chevron=`<span class="geo-chevron" style="transition:transform .2s;display:inline-block;font-size:12px;color:var(--muted)">&#9660;</span>`;
+
+let h=`<div class="section-title mb-12">Generateur WordPress</div>`;
+
+// Section 1 - Site & Domaine
+h+=`<div ${stepStyle}>
+<div ${stepHead} onclick="geoToggleStep('gen-step1-body',this)">
+<div style="display:flex;align-items:center"><span ${stepNum}>1</span><span style="font-weight:600;font-size:13px">Site &amp; Domaine</span></div>
+${chevron}
 </div>
+<div id="gen-step1-body" ${stepBody}>
+<div class="grid2 mb-12">
+<div><label>Domaine</label><input id="g-domain" placeholder="monsite.fr"></div>
+<div><label>Titre du site</label><input id="g-title" placeholder="Mon Site"></div>
+</div>
+<div class="grid2 mb-12">
+<div><label>Admin user</label><input id="g-admin-user" value="admin"></div>
+<div><label>Admin email</label><input id="g-admin-email" placeholder="admin@monsite.fr"></div>
+</div>
+<div style="max-width:calc(50% - 5px)"><label>Admin password</label><input id="g-admin-pass" type="password" placeholder="Laisser vide = auto"></div>
+</div></div>`;
+
+// Section 2 - Hebergement (FTP + MySQL)
+h+=`<div ${stepStyle}>
+<div ${stepHead} onclick="geoToggleStep('gen-step2-body',this)">
+<div style="display:flex;align-items:center"><span ${stepNum}>2</span><span style="font-weight:600;font-size:13px">Hebergement (FTP + MySQL)</span></div>
+${chevron}
+</div>
+<div id="gen-step2-body" ${stepBody} class="hidden" style="display:none;padding:18px 22px;background:var(--card);border-top:1px solid var(--border)">
 <div class="accent-title">FTP</div>
-<div class="grid2 mb-16">
+<div class="grid2 mb-12">
 <div><label>Host FTP</label><input id="g-ftp-host" placeholder="ftp.monsite.fr"></div>
 <div><label>User FTP</label><input id="g-ftp-user"></div>
-<div><label>Password FTP</label><input id="g-ftp-pass" type="password"></div>
-<div><label>Chemin FTP</label><input id="g-ftp-path" value="/" placeholder="/www/ ou /public_html/"></div>
 </div>
-<div class="accent-title">Base de données MySQL</div>
 <div class="grid2 mb-16">
-<div><label>Host MySQL</label><input id="g-db-host" placeholder="localhost"></div>
+<div><label>Password FTP</label><input id="g-ftp-pass" type="password"></div>
+<div><label>Chemin racine FTP</label><input id="g-ftp-root" value="/public_html" placeholder="/public_html"></div>
+</div>
+<div class="accent-title">MySQL</div>
+<div class="grid2 mb-12">
+<div><label>Host MySQL</label><input id="g-db-host" value="localhost"></div>
 <div><label>Nom BDD</label><input id="g-db-name"></div>
+</div>
+<div class="grid2 mb-12">
 <div><label>User MySQL</label><input id="g-db-user"></div>
 <div><label>Password MySQL</label><input id="g-db-pass" type="password"></div>
 </div>
-<div class="accent-title">WordPress</div>
-<div class="grid2 mb-16">
-<div><label>Username admin WP</label><input id="g-wp-user" value="admin"></div>
-<div><label>Email admin</label><input id="g-wp-email" placeholder="admin@monsite.fr"></div>
-<div><label>Thème</label><input id="g-wp-theme" placeholder="flavor (optionnel)"></div>
-<div><label>Niche / Secteur</label><input id="g-wp-niche" placeholder="plomberie, épaviste..."></div>
+<div class="grid2 mb-12">
+<div><label>Prefixe tables</label><input id="g-db-prefix" value="wp_" placeholder="wp_"></div>
+<div style="display:flex;align-items:center;padding-top:18px">
+<input type="checkbox" id="g-reset" style="width:auto;margin-right:8px"><label for="g-reset" style="margin:0;text-transform:none;font-size:13px;color:var(--text)">Reset avant install</label>
 </div>
-<button class="btn" onclick="installWP()">Installer WordPress</button>
 </div>
-<div id="gen-logs"></div>`;
+</div></div>`;
+
+// Section 3 - Theme Divi
+h+=`<div ${stepStyle}>
+<div ${stepHead} onclick="geoToggleStep('gen-step3-body',this)">
+<div style="display:flex;align-items:center"><span ${stepNum}>3</span><span style="font-weight:600;font-size:13px">Theme Divi</span></div>
+${chevron}
+</div>
+<div id="gen-step3-body" ${stepBody} class="hidden" style="display:none;padding:18px 22px;background:var(--card);border-top:1px solid var(--border)">
+<div style="margin-bottom:14px;display:flex;align-items:center">
+<input type="checkbox" id="g-use-divi" checked style="width:auto;margin-right:8px"><label for="g-use-divi" style="margin:0;text-transform:none;font-size:13px;color:var(--text)">Installer Divi</label>
+</div>
+<div class="grid2">
+<div><label>ET Username</label><input id="g-et-user" placeholder="username ElegantThemes"></div>
+<div><label>ET API Key</label><input id="g-et-key" placeholder="Cle API ElegantThemes"></div>
+</div>
+</div></div>`;
+
+// Section 4 - Generation de contenu
+h+=`<div ${stepStyle}>
+<div ${stepHead} onclick="geoToggleStep('gen-step4-body',this)">
+<div style="display:flex;align-items:center"><span ${stepNum}>4</span><span style="font-weight:600;font-size:13px">Generation de contenu</span></div>
+${chevron}
+</div>
+<div id="gen-step4-body" ${stepBody} class="hidden" style="display:none;padding:18px 22px;background:var(--card);border-top:1px solid var(--border)">
+<div style="margin-bottom:14px;display:flex;gap:24px;align-items:center">
+<label style="margin:0;display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text)">
+<input type="radio" name="g-gen-mode" value="manuel" checked style="width:auto"> Mode manuel (prompt)
+</label>
+<label style="margin:0;display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text)">
+<input type="radio" name="g-gen-mode" value="concurrent" style="width:auto"> Mode concurrent
+</label>
+</div>
+<div id="g-mode-manuel" style="margin-bottom:14px">
+<label>Prompt du site</label>
+<textarea id="g-site-prompt" rows="4" placeholder="Decrivez le site a generer : niche, pages, style..."></textarea>
+</div>
+<div id="g-mode-concurrent" class="hidden" style="margin-bottom:14px">
+<label>URLs concurrents (jusqu'a 3)</label>
+<input id="g-comp-url1" placeholder="https://concurrent1.fr" style="margin-bottom:6px">
+<input id="g-comp-url2" placeholder="https://concurrent2.fr" style="margin-bottom:6px">
+<input id="g-comp-url3" placeholder="https://concurrent3.fr">
+</div>
+<div style="display:flex;align-items:center">
+<input type="checkbox" id="g-webarchive" style="width:auto;margin-right:8px"><label for="g-webarchive" style="margin:0;text-transform:none;font-size:13px;color:var(--text)">Utiliser Web Archive</label>
+</div>
+</div></div>`;
+
+// Section 5 - E-E-A-T Google
+h+=`<div ${stepStyle}>
+<div ${stepHead} onclick="geoToggleStep('gen-step5-body',this)">
+<div style="display:flex;align-items:center"><span ${stepNum}>5</span><span style="font-weight:600;font-size:13px">E-E-A-T Google</span></div>
+${chevron}
+</div>
+<div id="gen-step5-body" ${stepBody} class="hidden" style="display:none;padding:18px 22px;background:var(--card);border-top:1px solid var(--border)">
+<div style="margin-bottom:14px;display:flex;align-items:center">
+<input type="checkbox" id="g-eat-enabled" checked style="width:auto;margin-right:8px"><label for="g-eat-enabled" style="margin:0;text-transform:none;font-size:13px;color:var(--text)">Activer E-A-T</label>
+</div>
+<div class="accent-title">Informations entreprise</div>
+<div class="grid2 mb-12">
+<div><label>Nom entreprise</label><input id="g-biz-name" placeholder="Mon Entreprise"></div>
+<div><label>Adresse</label><input id="g-biz-address" placeholder="123 Rue..."></div>
+</div>
+<div class="grid2 mb-12">
+<div><label>Telephone</label><input id="g-biz-phone" placeholder="01 23 45 67 89"></div>
+<div><label>Email</label><input id="g-biz-email" placeholder="contact@monsite.fr"></div>
+</div>
+<div class="grid2 mb-12">
+<div><label>Latitude</label><input id="g-biz-lat" placeholder="48.8566"></div>
+<div><label>Longitude</label><input id="g-biz-lng" placeholder="2.3522"></div>
+</div>
+<div style="margin-bottom:14px">
+<label>Horaires (JSON ou texte)</label>
+<input id="g-biz-hours" placeholder='{"lundi":"9h-18h","mardi":"9h-18h",...}'>
+</div>
+<div class="accent-title">Blocs EAT</div>
+<div style="display:flex;flex-wrap:wrap;gap:16px">
+<label style="margin:0;display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text)"><input type="checkbox" id="g-eat-faq" checked style="width:auto"> FAQ</label>
+<label style="margin:0;display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text)"><input type="checkbox" id="g-eat-reviews" checked style="width:auto"> Avis</label>
+<label style="margin:0;display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text)"><input type="checkbox" id="g-eat-hours" checked style="width:auto"> Horaires</label>
+<label style="margin:0;display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text)"><input type="checkbox" id="g-eat-map" checked style="width:auto"> Map</label>
+<label style="margin:0;display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text)"><input type="checkbox" id="g-eat-reassurance" checked style="width:auto"> Reassurance</label>
+<label style="margin:0;display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text)"><input type="checkbox" id="g-eat-howit" checked style="width:auto"> Comment ca marche</label>
+</div>
+</div></div>`;
+
+// Section 6 - Actions
+h+=`<div ${stepStyle}>
+<div ${stepHead} onclick="geoToggleStep('gen-step6-body',this)">
+<div style="display:flex;align-items:center"><span ${stepNum}>6</span><span style="font-weight:600;font-size:13px">Actions</span></div>
+${chevron}
+</div>
+<div id="gen-step6-body" ${stepBody}>
+<div style="display:flex;gap:10px;margin-bottom:16px">
+<button class="btn" id="gen-install-btn" onclick="runFullInstall()">Installer WordPress</button>
+</div>
+<div id="gen-status" style="margin-bottom:10px"></div>
+<div id="gen-logs"></div>
+</div></div>`;
+
+document.getElementById('tab-2').innerHTML=h;
+
+// Gestion du toggle mode manuel / concurrent
+document.querySelectorAll('input[name="g-gen-mode"]').forEach(r=>{
+r.addEventListener('change',()=>{
+const m=document.querySelector('input[name="g-gen-mode"]:checked').value;
+document.getElementById('g-mode-manuel').classList.toggle('hidden',m!=='manuel');
+document.getElementById('g-mode-concurrent').classList.toggle('hidden',m!=='concurrent');
+});
+});
 }
 
-async function installWP(){
+async function runFullInstall(){
 const domain=document.getElementById('g-domain').value.trim();
-const name=document.getElementById('g-sitename').value.trim();
 if(!domain){alert('Domaine requis');return;}
-// Créer ou trouver le site
-let sid;
-try{
-const res=await apiFetch('/sites/',{method:'POST',body:JSON.stringify({
-name:name||domain,domain:domain,
-niche:document.getElementById('g-wp-niche').value,
-host_provider:'custom',
-})});
-sid=res.id;
-}catch(e){
-// Site existe déjà — le récupérer
-const sites=await apiFetch('/sites/');
-const found=sites.find(s=>s.domain.includes(domain.replace('www.','')));
-if(found)sid=found.id;
-else{alert('Erreur : '+e.message);return;}
+
+const genMode=document.querySelector('input[name="g-gen-mode"]:checked').value;
+const compUrls=[];
+if(genMode==='concurrent'){
+['g-comp-url1','g-comp-url2','g-comp-url3'].forEach(id=>{
+const v=document.getElementById(id).value.trim();
+if(v)compUrls.push(v);
+});
 }
-const cfg={
-ftp_host:document.getElementById('g-ftp-host').value,
-ftp_user:document.getElementById('g-ftp-user').value,
-ftp_password:document.getElementById('g-ftp-pass').value,
-ftp_path:document.getElementById('g-ftp-path').value,
-wp_username:document.getElementById('g-wp-user').value,
-db_host:document.getElementById('g-db-host').value,
-db_name:document.getElementById('g-db-name').value,
-db_user:document.getElementById('g-db-user').value,
-db_password:document.getElementById('g-db-pass').value,
-};
-try{await apiFetch(`/sites/${sid}`,{method:'PUT',body:JSON.stringify(cfg)});}
-catch(e){alert('Erreur config : '+e.message);return;}
-try{await apiFetch('/generator/install',{method:'POST',body:JSON.stringify({site_id:Number(sid)})});}
-catch(e){alert('Erreur install : '+e.message);return;}
-const poll=setInterval(async()=>{
+
+let bizHours={};
 try{
-const d=await apiFetch(`/generator/logs/${sid}`);
+const hv=document.getElementById('g-biz-hours').value.trim();
+if(hv)bizHours=JSON.parse(hv);
+}catch(e){/* ignore parse errors, send empty */}
+
+const payload={
+domain:domain,
+site_title:document.getElementById('g-title').value.trim()||domain,
+admin_user:document.getElementById('g-admin-user').value.trim()||'admin',
+admin_email:document.getElementById('g-admin-email').value.trim(),
+admin_pass:document.getElementById('g-admin-pass').value,
+ftp_host:document.getElementById('g-ftp-host').value.trim(),
+ftp_user:document.getElementById('g-ftp-user').value.trim(),
+ftp_pass:document.getElementById('g-ftp-pass').value,
+ftp_root:document.getElementById('g-ftp-root').value.trim()||'/public_html',
+db_host:document.getElementById('g-db-host').value.trim()||'localhost',
+db_name:document.getElementById('g-db-name').value.trim(),
+db_user:document.getElementById('g-db-user').value.trim(),
+db_pass:document.getElementById('g-db-pass').value,
+db_prefix:document.getElementById('g-db-prefix').value.trim()||'wp_',
+reset_first:document.getElementById('g-reset').checked,
+use_divi:document.getElementById('g-use-divi').checked,
+et_username:document.getElementById('g-et-user').value.trim(),
+et_api_key:document.getElementById('g-et-key').value.trim(),
+generation_mode:genMode,
+site_prompt:document.getElementById('g-site-prompt').value.trim(),
+competitor_urls:compUrls,
+use_webarchive:document.getElementById('g-webarchive').checked,
+eat_enabled:document.getElementById('g-eat-enabled').checked,
+business_name:document.getElementById('g-biz-name').value.trim(),
+business_address:document.getElementById('g-biz-address').value.trim(),
+business_phone:document.getElementById('g-biz-phone').value.trim(),
+business_email:document.getElementById('g-biz-email').value.trim(),
+business_lat:document.getElementById('g-biz-lat').value.trim(),
+business_lng:document.getElementById('g-biz-lng').value.trim(),
+business_hours:bizHours,
+eat_faq:document.getElementById('g-eat-faq').checked,
+eat_reviews:document.getElementById('g-eat-reviews').checked,
+eat_hours:document.getElementById('g-eat-hours').checked,
+eat_map:document.getElementById('g-eat-map').checked,
+eat_reassurance:document.getElementById('g-eat-reassurance').checked,
+eat_how_it_works:document.getElementById('g-eat-howit').checked,
+};
+
+const btn=document.getElementById('gen-install-btn');
+btn.disabled=true;btn.textContent='Installation en cours...';
+document.getElementById('gen-status').innerHTML='<span style="color:var(--accent);font-size:13px;font-weight:600">Demarrage du pipeline...</span>';
+
+let key;
+try{
+const res=await apiFetch('/generator/full-install',{method:'POST',body:JSON.stringify(payload)});
+key=res.key;
+}catch(e){
+btn.disabled=false;btn.textContent='Installer WordPress';
+document.getElementById('gen-status').innerHTML=`<span style="color:var(--danger);font-size:13px">Erreur: ${e.message}</span>`;
+return;
+}
+
+if(_genPollInterval)clearInterval(_genPollInterval);
+
+const stepLabels={init:'Initialisation',ftp_upload:'Upload FTP',database:'Base de donnees',wp_install:'Installation WP',theme:'Installation theme',content:'Generation contenu',eat:'Blocs E-A-T',done:'Termine'};
+
+_genPollInterval=setInterval(async()=>{
+try{
+const d=await apiFetch(`/generator/pipeline-status/${key}`);
+const stepLabel=stepLabels[d.step]||d.step;
+const statusColor=d.done?(d.error?'var(--danger)':'var(--success)'):'var(--accent)';
+document.getElementById('gen-status').innerHTML=`<span style="color:${statusColor};font-size:13px;font-weight:600">Etape : ${stepLabel}</span>`;
 let lh='<div class="card log-box">';
-(d.logs||[]).forEach(l=>{const cls=l.startsWith('ERROR')?'log-err':l.startsWith('SUCCESS')?'log-win':'log-ok';lh+=`<div class="${cls}">${l}</div>`;});
-document.getElementById('gen-logs').innerHTML=lh+'</div>';
-if(d.logs?.some(l=>l.startsWith('SUCCESS')||l.startsWith('ERROR')))clearInterval(poll);
-}catch(e){clearInterval(poll);document.getElementById('gen-logs').innerHTML=`<div class="card log-box"><div class="log-err">${e.message}</div></div>`;}
+(d.logs||[]).forEach(l=>{
+const cls=l.startsWith('ERROR')?'log-err':l.startsWith('SUCCESS')?'log-win':'log-ok';
+lh+=`<div class="${cls}">${l}</div>`;
+});
+lh+='</div>';
+document.getElementById('gen-logs').innerHTML=lh;
+const logBox=document.querySelector('#gen-logs .log-box');
+if(logBox)logBox.scrollTop=logBox.scrollHeight;
+if(d.done){
+clearInterval(_genPollInterval);_genPollInterval=null;
+btn.disabled=false;btn.textContent='Installer WordPress';
+}
+}catch(e){
+clearInterval(_genPollInterval);_genPollInterval=null;
+btn.disabled=false;btn.textContent='Installer WordPress';
+document.getElementById('gen-logs').innerHTML=`<div class="card log-box"><div class="log-err">${e.message}</div></div>`;
+}
 },2000);
 }
 

@@ -25,8 +25,58 @@ class WPInstallRequest(BaseModel):
     competitor_url: Optional[str] = None
 
 
-# Logs stockés en mémoire par site_id (simple pour v1)
+class FullInstallRequest(BaseModel):
+    # Site
+    domain: str
+    site_title: str
+    admin_user: str = "admin"
+    admin_email: str = ""
+    admin_pass: str = ""
+    # FTP
+    ftp_host: str
+    ftp_user: str
+    ftp_pass: str
+    ftp_root: str = "/public_html"
+    # MySQL
+    db_host: str = "localhost"
+    db_name: str
+    db_user: str
+    db_pass: str
+    db_prefix: str = "wp_"
+    # Options
+    reset_first: bool = False
+    use_divi: bool = True
+    et_username: str = ""
+    et_api_key: str = ""
+    # Content generation
+    generation_mode: str = "manuel"  # "manuel" | "concurrent"
+    site_prompt: str = ""
+    competitor_urls: list[str] = []
+    # Web Archive
+    use_webarchive: bool = False
+    # EAT
+    eat_enabled: bool = True
+    business_name: str = ""
+    business_address: str = ""
+    business_phone: str = ""
+    business_email: str = ""
+    business_lat: str = ""
+    business_lng: str = ""
+    business_hours: dict = {}
+    # Blocs EAT
+    eat_faq: bool = True
+    eat_reviews: bool = True
+    eat_hours: bool = True
+    eat_map: bool = True
+    eat_reassurance: bool = True
+    eat_how_it_works: bool = True
+
+
+# Logs stockes en memoire par site_id (simple pour v1)
 _install_logs: dict[int, list[str]] = {}
+
+# Logs pour le pipeline full-install, indexes par cle unique
+_pipeline_logs: dict[str, dict] = {}
 
 
 def _log_for_site(site_id: int):
@@ -39,13 +89,40 @@ def _log_for_site(site_id: int):
     return logger
 
 
+def _log_for_pipeline(key: str):
+    """Cree un logger pour le pipeline full-install."""
+    if key not in _pipeline_logs:
+        _pipeline_logs[key] = {"step": "init", "logs": [], "done": False, "error": None}
+
+    def logger(msg: str):
+        _pipeline_logs[key]["logs"].append(msg)
+        # Detecter l'etape courante a partir des messages
+        lower = msg.lower()
+        if "ftp" in lower:
+            _pipeline_logs[key]["step"] = "ftp_upload"
+        elif "mysql" in lower or "database" in lower or "bdd" in lower:
+            _pipeline_logs[key]["step"] = "database"
+        elif "wordpress" in lower and "install" in lower:
+            _pipeline_logs[key]["step"] = "wp_install"
+        elif "divi" in lower or "theme" in lower:
+            _pipeline_logs[key]["step"] = "theme"
+        elif "contenu" in lower or "content" in lower or "generation" in lower:
+            _pipeline_logs[key]["step"] = "content"
+        elif "eat" in lower or "e-a-t" in lower:
+            _pipeline_logs[key]["step"] = "eat"
+        elif "termin" in lower or "success" in lower:
+            _pipeline_logs[key]["step"] = "done"
+
+    return logger
+
+
 @router.post("/install")
 def install_wordpress(
     req: WPInstallRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    """Lance l'installation WordPress en tâche de fond"""
+    """Lance l'installation WordPress en tache de fond"""
     site = db.query(Site).filter(Site.id == req.site_id).first()
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
@@ -53,7 +130,7 @@ def install_wordpress(
     if not all([site.ftp_host, site.ftp_user, site.ftp_password, site.db_host, site.db_name]):
         raise HTTPException(status_code=400, detail="FTP and DB credentials required")
 
-    _install_logs[site.id] = ["Installation démarrée..."]
+    _install_logs[site.id] = ["Installation demarree..."]
 
     def run_install():
         log = _log_for_site(site.id)
@@ -74,7 +151,7 @@ def install_wordpress(
 
 @router.get("/logs/{site_id}")
 def get_install_logs(site_id: int):
-    """Récupère les logs d'installation en cours"""
+    """Recupere les logs d'installation en cours"""
     logs = _install_logs.get(site_id, [])
     return {"site_id": site_id, "logs": logs, "count": len(logs)}
 
@@ -91,3 +168,94 @@ def test_wp_connection(site_id: int, db: Session = Depends(get_db)):
     publisher = WPPublisher(site)
     result = publisher.test_connection()
     return result
+
+
+@router.post("/full-install")
+def full_install(
+    req: FullInstallRequest,
+    background_tasks: BackgroundTasks,
+):
+    """Lance le pipeline complet d'installation WordPress en tache de fond."""
+    import hashlib, time
+
+    # Generer une cle unique pour cette installation
+    raw = f"{req.domain}-{time.time()}"
+    key = hashlib.md5(raw.encode()).hexdigest()[:12]
+
+    _pipeline_logs[key] = {"step": "init", "logs": ["Pipeline demarre..."], "done": False, "error": None}
+
+    def run_pipeline():
+        log = _log_for_pipeline(key)
+        try:
+            from app.services.wp_generator import WPGeneratorPipeline
+
+            pipeline = WPGeneratorPipeline(
+                domain=req.domain,
+                site_title=req.site_title,
+                admin_user=req.admin_user,
+                admin_email=req.admin_email,
+                admin_pass=req.admin_pass,
+                ftp_host=req.ftp_host,
+                ftp_user=req.ftp_user,
+                ftp_pass=req.ftp_pass,
+                ftp_root=req.ftp_root,
+                db_host=req.db_host,
+                db_name=req.db_name,
+                db_user=req.db_user,
+                db_pass=req.db_pass,
+                db_prefix=req.db_prefix,
+                reset_first=req.reset_first,
+                use_divi=req.use_divi,
+                et_username=req.et_username,
+                et_api_key=req.et_api_key,
+                generation_mode=req.generation_mode,
+                site_prompt=req.site_prompt,
+                competitor_urls=req.competitor_urls,
+                use_webarchive=req.use_webarchive,
+                eat_enabled=req.eat_enabled,
+                business_name=req.business_name,
+                business_address=req.business_address,
+                business_phone=req.business_phone,
+                business_email=req.business_email,
+                business_lat=req.business_lat,
+                business_lng=req.business_lng,
+                business_hours=req.business_hours,
+                eat_faq=req.eat_faq,
+                eat_reviews=req.eat_reviews,
+                eat_hours=req.eat_hours,
+                eat_map=req.eat_map,
+                eat_reassurance=req.eat_reassurance,
+                eat_how_it_works=req.eat_how_it_works,
+                log_callback=log,
+            )
+            pipeline.run()
+            log("SUCCESS: Pipeline termine avec succes")
+            _pipeline_logs[key]["done"] = True
+            _pipeline_logs[key]["step"] = "done"
+        except ImportError:
+            log("ERROR: Module app.services.wp_generator non disponible")
+            _pipeline_logs[key]["done"] = True
+            _pipeline_logs[key]["error"] = "Module wp_generator non disponible"
+        except Exception as e:
+            log(f"ERROR: {str(e)}")
+            _pipeline_logs[key]["done"] = True
+            _pipeline_logs[key]["error"] = str(e)
+
+    background_tasks.add_task(run_pipeline)
+    return {"message": "Pipeline started", "key": key}
+
+
+@router.get("/pipeline-status/{key}")
+def get_pipeline_status(key: str):
+    """Recupere le statut et les logs du pipeline full-install."""
+    entry = _pipeline_logs.get(key)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+    return {
+        "key": key,
+        "step": entry["step"],
+        "logs": entry["logs"],
+        "done": entry["done"],
+        "error": entry["error"],
+        "count": len(entry["logs"]),
+    }
