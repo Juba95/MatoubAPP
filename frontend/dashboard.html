@@ -710,7 +710,7 @@ const as=semOv.authority_score||0;
 const asColor=as>=60?'var(--success)':as>=30?'var(--warn)':'var(--danger)';
 h+=`<div class="card mb-12" style="border-top:3px solid var(--accent)">
 <div class="accent-title" style="display:flex;align-items:center;gap:8px">Semrush — Vue d'ensemble <span style="font-size:10px;background:var(--accent);color:#fff;padding:2px 8px;border-radius:10px">SEO</span></div>
-<div class="metrics" style="grid-template-columns:repeat(5,1fr)">
+<div class="metrics" style="grid-template-columns:repeat(${3+(semOv.organic_cost?1:0)+(semOv.paid_keywords?1:0)},1fr)">
 <div class="metric" style="text-align:center;border-left:3px solid ${asColor}">
 <div class="metric-label">Authority Score</div>
 <div class="metric-val" style="font-size:28px;color:${asColor}">${as}<span style="font-size:12px;color:var(--muted)">/100</span></div>
@@ -724,15 +724,15 @@ h+=`<div class="card mb-12" style="border-top:3px solid var(--accent)">
 <div class="metric-val">${fmt(semOv.organic_traffic||0)}</div>
 <div style="font-size:10px;color:var(--muted)">visites/mois</div>
 </div>
-<div class="metric" style="text-align:center">
-<div class="metric-label">Backlinks</div>
-<div class="metric-val">${fmt(semOv.backlinks||0)}</div>
-</div>
-<div class="metric" style="text-align:center">
+${semOv.organic_cost?`<div class="metric" style="text-align:center">
 <div class="metric-label">Cout du Trafic</div>
-<div class="metric-val">$${fmt(semOv.organic_cost||0)}</div>
+<div class="metric-val">$${fmt(semOv.organic_cost)}</div>
 <div style="font-size:10px;color:var(--muted)">/mois equivalent</div>
-</div>
+</div>`:''}
+${semOv.paid_keywords?`<div class="metric" style="text-align:center">
+<div class="metric-label">Keywords Payants</div>
+<div class="metric-val">${fmt(semOv.paid_keywords)}</div>
+</div>`:''}
 </div>
 </div>`;
 

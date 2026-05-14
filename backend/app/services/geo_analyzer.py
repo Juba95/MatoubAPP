@@ -887,7 +887,9 @@ class GEOAnalyzer:
             return []
 
     def _fetch_semrush_data(self, domain: str) -> dict:
-        """Fetch comprehensive Semrush data for a domain."""
+        """Fetch comprehensive Semrush data for a domain.
+        Semrush API returns full column names (e.g. 'Organic Keywords')
+        not codes (e.g. 'Or'), so we map by actual header names."""
         if not self.settings.semrush_api_key:
             return {}
 
@@ -898,51 +900,77 @@ class GEOAnalyzer:
             "backlinks_overview": {},
         }
 
-        # 1. Domain Overview (authority score, traffic, keywords count)
+        # 1. Domain Overview
+        # Returns: Domain;Rank;Organic Keywords;Organic Traffic (+ others if plan allows)
         overview = self._semrush_get("domain_ranks", {
-            "export_columns": "Dn,Rk,Or,Ot,Os,Ts,Fk,Fp,Nk,Td",
+            "export_columns": "Dn,Rk,Or,Ot,Os,Fk,Fp",
             "domain": domain,
             "database": "fr",
         })
         if overview:
             row = overview[0]
             data["domain_overview"] = {
-                "authority_score": self._safe_int(row.get("Rk", "0")),
-                "organic_keywords": self._safe_int(row.get("Or", "0")),
-                "organic_traffic": self._safe_int(row.get("Ot", "0")),
-                "organic_cost": self._safe_float(row.get("Os", "0")),
-                "paid_keywords": self._safe_int(row.get("Fk", "0")),
-                "paid_traffic": self._safe_int(row.get("Fp", "0")),
-                "backlinks": self._safe_int(row.get("Nk", "0")),
-                "trust_score": self._safe_float(row.get("Td", "0")),
+                "authority_score": self._safe_int(
+                    row.get("Rank", row.get("Rk", "0"))
+                ),
+                "organic_keywords": self._safe_int(
+                    row.get("Organic Keywords", row.get("Or", "0"))
+                ),
+                "organic_traffic": self._safe_int(
+                    row.get("Organic Traffic", row.get("Ot", "0"))
+                ),
+                "organic_cost": self._safe_float(
+                    row.get("Organic Cost", row.get("Os", "0"))
+                ),
+                "paid_keywords": self._safe_int(
+                    row.get("Adwords Keywords", row.get("Fk", "0"))
+                ),
+                "paid_traffic": self._safe_int(
+                    row.get("Adwords Traffic", row.get("Fp", "0"))
+                ),
             }
 
-        # 2. Top Organic Keywords (positions, volume, traffic %)
+        # 2. Top Organic Keywords
+        # Returns: Keyword;Position;Search Volume;CPC;Url;Traffic (%);Traffic Cost (%);Competition;Number of Results;Trends
         kw_rows = self._semrush_get("domain_organic", {
             "export_columns": "Ph,Po,Nq,Cp,Ur,Tr,Tc,Co,Nr,Td",
             "domain": domain,
             "database": "fr",
             "display_limit": "30",
             "display_sort": "tr_desc",
-            "display_filter": "",
         })
         for row in kw_rows:
             data["organic_keywords"].append({
-                "keyword": row.get("Ph", ""),
-                "position": self._safe_int(row.get("Po", "0")),
-                "volume": self._safe_int(row.get("Nq", "0")),
-                "cpc": self._safe_float(row.get("Cp", "0")),
-                "url": row.get("Ur", ""),
-                "traffic_pct": self._safe_float(row.get("Tr", "0")),
-                "traffic_cost": self._safe_float(row.get("Tc", "0")),
-                "competition": self._safe_float(row.get("Co", "0")),
-                "results": self._safe_int(row.get("Nr", "0")),
-                "trend": row.get("Td", ""),
+                "keyword": row.get("Keyword", row.get("Ph", "")),
+                "position": self._safe_int(
+                    row.get("Position", row.get("Po", "0"))
+                ),
+                "volume": self._safe_int(
+                    row.get("Search Volume", row.get("Nq", "0"))
+                ),
+                "cpc": self._safe_float(
+                    row.get("CPC", row.get("Cp", "0"))
+                ),
+                "url": row.get("Url", row.get("Ur", "")),
+                "traffic_pct": self._safe_float(
+                    row.get("Traffic (%)", row.get("Tr", "0"))
+                ),
+                "traffic_cost": self._safe_float(
+                    row.get("Traffic Cost (%)", row.get("Tc", "0"))
+                ),
+                "competition": self._safe_float(
+                    row.get("Competition", row.get("Co", "0"))
+                ),
+                "results": self._safe_int(
+                    row.get("Number of Results", row.get("Nr", "0"))
+                ),
+                "trend": row.get("Trends", row.get("Td", "")),
             })
 
         # 3. Organic Competitors
+        # Returns: Domain;Competitor Relevance;Common Keywords;Organic Keywords;Organic Traffic
         comp_rows = self._semrush_get("domain_organic_organic", {
-            "export_columns": "Dn,Cr,Np,Or,Ot,Os,Ts",
+            "export_columns": "Dn,Cr,Np,Or,Ot,Os",
             "domain": domain,
             "database": "fr",
             "display_limit": "15",
@@ -950,17 +978,27 @@ class GEOAnalyzer:
         })
         for row in comp_rows:
             data["organic_competitors"].append({
-                "domain": row.get("Dn", ""),
-                "common_keywords": self._safe_int(row.get("Np", "0")),
-                "competition_level": self._safe_float(row.get("Cr", "0")),
-                "organic_keywords": self._safe_int(row.get("Or", "0")),
-                "organic_traffic": self._safe_int(row.get("Ot", "0")),
-                "organic_cost": self._safe_float(row.get("Os", "0")),
+                "domain": row.get("Domain", row.get("Dn", "")),
+                "common_keywords": self._safe_int(
+                    row.get("Common Keywords", row.get("Np", "0"))
+                ),
+                "competition_level": self._safe_float(
+                    row.get("Competitor Relevance", row.get("Cr", "0"))
+                ),
+                "organic_keywords": self._safe_int(
+                    row.get("Organic Keywords", row.get("Or", "0"))
+                ),
+                "organic_traffic": self._safe_int(
+                    row.get("Organic Traffic", row.get("Ot", "0"))
+                ),
+                "organic_cost": self._safe_float(
+                    row.get("Organic Cost", row.get("Os", "0"))
+                ),
             })
 
-        # 4. Backlinks Overview
+        # 4. Backlinks Overview (may not be available on all plans)
         bl_rows = self._semrush_get("backlinks_overview", {
-            "export_columns": "total,domains_num,urls_num,ips_num,follows_num,nofollows_num,texts_num,images_num,forms_num,frames_num",
+            "export_columns": "total,domains_num,urls_num,ips_num,follows_num,nofollows_num,texts_num,images_num",
             "target": domain,
             "target_type": "root_domain",
         })
