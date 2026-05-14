@@ -142,8 +142,12 @@ def preview_geoloc(req: GeolocRequest, db: Session = Depends(get_db)):
     villes = load_villes(req.departments, req.regions, req.min_population)
     pages = []
     for v in villes:
-        keyword = req.keyword_template.replace("{ville}", v["name"])
-        slug = req.keyword_template.replace("{ville}", v["slug"]).replace(" ", "-").lower()
+        if "{ville}" in req.keyword_template:
+            keyword = req.keyword_template.replace("{ville}", v["name"])
+            slug = req.keyword_template.replace("{ville}", v["slug"]).replace(" ", "-").lower()
+        else:
+            keyword = f"{req.keyword_template} {v['name']}"
+            slug = f"{req.keyword_template.replace(' ', '-').lower()}-{v['slug']}"
         pages.append({
             "keyword": keyword,
             "slug": slug,
@@ -174,12 +178,15 @@ def generate_geoloc(req: GeolocRequest, db: Session = Depends(get_db)):
     villes = load_villes(req.departments, req.regions, req.min_population)
     created = 0
     for v in villes:
-        keyword = req.keyword_template.replace("{ville}", v["name"])
+        if "{ville}" in req.keyword_template:
+            keyword = req.keyword_template.replace("{ville}", v["name"])
+        else:
+            keyword = f"{req.keyword_template} {v['name']}"
         action = Action(
             site_id=site.id,
             action_type=ActionType.GEOLOC,
             status=ActionStatus.PENDING,
-            title=f"{site.domain} — {keyword}",
+            title=f"{site.name} — {keyword}",
             keyword=keyword,
             description=f"Page géolocalisée pour {v['name']} ({v['department']}) - {v['population']} hab.",
             impact_score=v["population"] / 100,

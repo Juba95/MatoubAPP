@@ -904,27 +904,71 @@ document.getElementById('geo-result').innerHTML=h;
 
 // GENERATOR
 async function loadGenerator(){
-let sites;
-try{sites=await apiFetch('/sites/');}catch(e){document.getElementById('tab-2').innerHTML=`<div class="card" style="color:var(--danger)">Erreur : ${e.message}</div>`;return;}
-let h=`<div class="section-title mb-12">Générateur WordPress</div><div class="card">
-<label>Site cible</label><select id="gen-site" style="margin-bottom:16px" onchange="showGenForm()"><option value="">Sélectionner un site...</option>`;
-sites.forEach(s=>{h+=`<option value="${s.id}">${s.name} \u2014 ${s.domain}</option>`;});
-h+=`</select><div id="gen-form" class="hidden">
+document.getElementById('tab-2').innerHTML=`
+<div class="section-title mb-12">Générateur WordPress</div>
+<div class="card">
+<div class="accent-title">Site à installer</div>
+<div class="grid2 mb-16">
+<div><label>Domaine</label><input id="g-domain" placeholder="monsite.fr"></div>
+<div><label>Nom du site</label><input id="g-sitename" placeholder="Mon Site"></div>
+</div>
 <div class="accent-title">FTP</div>
-<div class="grid2 mb-16"><div><label>Host</label><input id="g-ftp-host"></div><div><label>User</label><input id="g-ftp-user"></div><div><label>Password</label><input id="g-ftp-pass" type="password"></div><div><label>WP User</label><input id="g-wp-user" value="admin"></div></div>
-<div class="accent-title">MySQL</div>
-<div class="grid2 mb-16"><div><label>Host</label><input id="g-db-host" placeholder="localhost"></div><div><label>Nom BDD</label><input id="g-db-name"></div><div><label>User</label><input id="g-db-user"></div><div><label>Password</label><input id="g-db-pass" type="password"></div></div>
+<div class="grid2 mb-16">
+<div><label>Host FTP</label><input id="g-ftp-host" placeholder="ftp.monsite.fr"></div>
+<div><label>User FTP</label><input id="g-ftp-user"></div>
+<div><label>Password FTP</label><input id="g-ftp-pass" type="password"></div>
+<div><label>Chemin FTP</label><input id="g-ftp-path" value="/" placeholder="/www/ ou /public_html/"></div>
+</div>
+<div class="accent-title">Base de données MySQL</div>
+<div class="grid2 mb-16">
+<div><label>Host MySQL</label><input id="g-db-host" placeholder="localhost"></div>
+<div><label>Nom BDD</label><input id="g-db-name"></div>
+<div><label>User MySQL</label><input id="g-db-user"></div>
+<div><label>Password MySQL</label><input id="g-db-pass" type="password"></div>
+</div>
+<div class="accent-title">WordPress</div>
+<div class="grid2 mb-16">
+<div><label>Username admin WP</label><input id="g-wp-user" value="admin"></div>
+<div><label>Email admin</label><input id="g-wp-email" placeholder="admin@monsite.fr"></div>
+<div><label>Thème</label><input id="g-wp-theme" placeholder="flavor (optionnel)"></div>
+<div><label>Niche / Secteur</label><input id="g-wp-niche" placeholder="plomberie, épaviste..."></div>
+</div>
 <button class="btn" onclick="installWP()">Installer WordPress</button>
-</div></div><div id="gen-logs"></div>`;
-document.getElementById('tab-2').innerHTML=h;
+</div>
+<div id="gen-logs"></div>`;
 }
 
-function showGenForm(){document.getElementById('gen-form').classList.toggle('hidden',!document.getElementById('gen-site').value);}
-
 async function installWP(){
-const sid=document.getElementById('gen-site').value;
-if(!sid)return;
-const cfg={ftp_host:document.getElementById('g-ftp-host').value,ftp_user:document.getElementById('g-ftp-user').value,ftp_password:document.getElementById('g-ftp-pass').value,wp_username:document.getElementById('g-wp-user').value,db_host:document.getElementById('g-db-host').value,db_name:document.getElementById('g-db-name').value,db_user:document.getElementById('g-db-user').value,db_password:document.getElementById('g-db-pass').value};
+const domain=document.getElementById('g-domain').value.trim();
+const name=document.getElementById('g-sitename').value.trim();
+if(!domain){alert('Domaine requis');return;}
+// Créer ou trouver le site
+let sid;
+try{
+const res=await apiFetch('/sites/',{method:'POST',body:JSON.stringify({
+name:name||domain,domain:domain,
+niche:document.getElementById('g-wp-niche').value,
+host_provider:'custom',
+})});
+sid=res.id;
+}catch(e){
+// Site existe déjà — le récupérer
+const sites=await apiFetch('/sites/');
+const found=sites.find(s=>s.domain.includes(domain.replace('www.','')));
+if(found)sid=found.id;
+else{alert('Erreur : '+e.message);return;}
+}
+const cfg={
+ftp_host:document.getElementById('g-ftp-host').value,
+ftp_user:document.getElementById('g-ftp-user').value,
+ftp_password:document.getElementById('g-ftp-pass').value,
+ftp_path:document.getElementById('g-ftp-path').value,
+wp_username:document.getElementById('g-wp-user').value,
+db_host:document.getElementById('g-db-host').value,
+db_name:document.getElementById('g-db-name').value,
+db_user:document.getElementById('g-db-user').value,
+db_password:document.getElementById('g-db-pass').value,
+};
 try{await apiFetch(`/sites/${sid}`,{method:'PUT',body:JSON.stringify(cfg)});}
 catch(e){alert('Erreur config : '+e.message);return;}
 try{await apiFetch('/generator/install',{method:'POST',body:JSON.stringify({site_id:Number(sid)})});}
@@ -944,15 +988,13 @@ if(d.logs?.some(l=>l.startsWith('SUCCESS')||l.startsWith('ERROR')))clearInterval
 let geoRegions=[],geoDepts=[],selRegs=[],selDepts=[],geoPreview=null;
 
 async function loadGeoloc(){
-let sites,regions;
-try{[sites,regions]=await Promise.all([apiFetch('/sites/'),apiFetch('/geoloc/regions')]);}catch(e){document.getElementById('tab-3').innerHTML=`<div class="card" style="color:var(--danger)">Erreur : ${e.message}</div>`;return;}
+let regions;
+try{regions=await apiFetch('/geoloc/regions');}catch(e){document.getElementById('tab-3').innerHTML=`<div class="card" style="color:var(--danger)">Erreur : ${e.message}</div>`;return;}
 geoRegions=regions;selRegs=[];selDepts=[];geoPreview=null;
 let h=`<div class="section-title mb-12">Pages géolocalisées</div><div class="card">
 <div class="grid2 mb-16">
-<div><label>Site cible</label><select id="geo-site"><option value="">Sélectionner...</option>`;
-sites.forEach(s=>{h+=`<option value="${s.id}">${s.name}</option>`;});
-h+=`</select></div>
-<div><label>Mot-clé (avec {ville})</label><input id="geo-kw" placeholder="serrurier {ville}"></div></div>
+<div><label>Domaine du site</label><input id="geo-domain" placeholder="monsite.fr"></div>
+<div><label>Mot-clé (la ville sera ajoutée auto)</label><input id="geo-kw" placeholder="serrurier"></div></div>
 <div class="mb-16"><label>Population min : <span id="pop-val">5 000</span> hab.</label>
 <input type="range" id="geo-pop" min="1000" max="50000" step="1000" value="5000" oninput="document.getElementById('pop-val').textContent=Number(this.value).toLocaleString('fr-FR')" style="accent-color:var(--accent)"></div>
 <div class="mb-16"><label>Régions</label><div class="wrap-btns" id="geo-regions">`;
@@ -982,14 +1024,32 @@ if(selDepts.includes(d)){selDepts=selDepts.filter(x=>x!==d);el.classList.remove(
 else{selDepts.push(d);el.classList.add('on');}
 }
 
-function geoBody(){
-return{site_id:Number(document.getElementById('geo-site').value),keyword_template:document.getElementById('geo-kw').value,min_population:Number(document.getElementById('geo-pop').value),...(selRegs.length>0&&{regions:selRegs}),...(selDepts.length>0&&{departments:selDepts})};
+let _geoSiteId=null;
+async function ensureGeoSite(){
+const domain=document.getElementById('geo-domain').value.trim();
+if(!domain)return null;
+if(_geoSiteId)return _geoSiteId;
+try{
+const res=await apiFetch('/sites/',{method:'POST',body:JSON.stringify({name:domain,domain:domain})});
+_geoSiteId=res.id;
+}catch(e){
+const sites=await apiFetch('/sites/');
+const found=sites.find(s=>s.domain.includes(domain.replace('www.','')));
+if(found)_geoSiteId=found.id;
+}
+return _geoSiteId;
+}
+
+function geoBody(siteId){
+return{site_id:siteId,keyword_template:document.getElementById('geo-kw').value,min_population:Number(document.getElementById('geo-pop').value),...(selRegs.length>0&&{regions:selRegs}),...(selDepts.length>0&&{departments:selDepts})};
 }
 
 async function previewGeoloc(){
-if(!document.getElementById('geo-site').value||!document.getElementById('geo-kw').value)return;
+if(!document.getElementById('geo-domain').value||!document.getElementById('geo-kw').value)return;
+const siteId=await ensureGeoSite();
+if(!siteId){alert('Impossible de trouver/créer le site');return;}
 document.getElementById('geo-preview').innerHTML='';document.getElementById('geo-gen-btn').innerHTML='';
-try{geoPreview=await apiFetch('/geoloc/preview',{method:'POST',body:JSON.stringify(geoBody())});}
+try{geoPreview=await apiFetch('/geoloc/preview',{method:'POST',body:JSON.stringify(geoBody(siteId))});}
 catch(e){document.getElementById('geo-preview').innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;return;}
 document.getElementById('geo-gen-btn').innerHTML=`<button class="btn" style="background:var(--success)" onclick="generateGeoloc()">Générer ${geoPreview.total_pages} pages (~${geoPreview.estimated_cost_eur}\u20AC)</button>`;
 let h=`<div class="card"><div style="font-size:14px;font-weight:600;margin-bottom:8px">${geoPreview.total_pages} pages \u2014 ~${geoPreview.estimated_cost_eur}\u20AC</div><div style="max-height:260px;overflow-y:auto">`;
@@ -1000,7 +1060,9 @@ document.getElementById('geo-preview').innerHTML=h;
 }
 
 async function generateGeoloc(){
-try{const res=await apiFetch('/geoloc/generate',{method:'POST',body:JSON.stringify(geoBody())});
+const siteId=await ensureGeoSite();
+if(!siteId)return;
+try{const res=await apiFetch('/geoloc/generate',{method:'POST',body:JSON.stringify(geoBody(siteId))});
 document.getElementById('geo-result').innerHTML=`<div class="card result-box"><div class="result-msg">${res.message}</div><div class="result-sub">Visible dans la file de validation (Overview)</div></div>`;
 }catch(e){document.getElementById('geo-result').innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;}
 }
