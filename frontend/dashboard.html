@@ -284,8 +284,22 @@ h+=`<div style="display:flex;justify-content:space-between;align-items:center;pa
 <button class="btn-success" style="font-size:11px;padding:4px 14px" onclick="validateAll([${siteIds.join(',')}])">Tout valider</button>
 </div></div>`;
 
+// Séparer par type : Optim/Create d'abord, Géoloc ensuite
+const optimActions=siteActions.filter(a=>a.action_type!=='geoloc');
+const geolocActions=siteActions.filter(a=>a.action_type==='geoloc');
+const sortedActions=[...optimActions,...geolocActions];
+if(optimActions.length&&geolocActions.length){
+// Sous-header pour la section Optim/Create
+h+=`<div style="padding:6px 20px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--blue);background:rgba(113,128,255,.05);border-bottom:1px solid var(--border)">Optimisations / Nouveaux contenus (${optimActions.length})</div>`;
+}
+
 // Actions du site
-siteActions.forEach(a=>{
+let geolocHeaderShown=false;
+sortedActions.forEach((a,idx)=>{
+if(!geolocHeaderShown&&a.action_type==='geoloc'&&optimActions.length){
+geolocHeaderShown=true;
+h+=`<div style="padding:6px 20px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--success);background:rgba(81,207,102,.05);border-bottom:1px solid var(--border)">Pages géolocalisées (${geolocActions.length})</div>`;
+}
 const typeLabel=a.action_type==='optimize'?'Optim.':a.action_type==='geoloc'?'Géoloc':'Nouveau';
 const typeColor=a.action_type==='optimize'?'var(--blue)':a.action_type==='create'?'var(--accent)':'var(--success)';
 const posInfo=a.current_position&&a.previous_position?`${Math.round(a.previous_position)}\u2192${Math.round(a.current_position)}`:'';
