@@ -851,9 +851,11 @@ h+=`<div class="card mb-12" style="font-size:12px;color:var(--muted);line-height
 // ── ROW 2 : Repartition par LLM + Score par plateforme ──
 h+=`<div class="grid2 mb-12">`;
 
-// Left — Horizontal bar chart mentions by platform
-h+=`<div class="card"><div class="accent-title">Repartition par LLM</div>`;
+// Left — Mentions LLM (DataForSEO) or AI Overview (Semrush fallback)
+const semAio=sem.ai_overview||{};
 if(mbp.length){
+// DataForSEO data available
+h+=`<div class="card"><div class="accent-title">Repartition par LLM</div>`;
 const maxMentions=Math.max(...mbp.map(x=>x.mentions||0),1);
 mbp.forEach(m=>{
 const pct=m.pct||0;
@@ -868,8 +870,46 @@ h+=`<div style="margin-bottom:10px">
 </div>
 </div>`;
 });
+h+=`</div>`;
+} else {
+// Semrush AI Overview fallback
+h+=`<div class="card"><div class="accent-title">Google AI Overview <span style="font-size:10px;background:var(--accent);color:#fff;padding:2px 8px;border-radius:10px">Semrush</span></div>`;
+if(semAio.total_keywords_analyzed){
+const aioKw=semAio.keywords_with_ai_overview||0;
+const aioIn=semAio.keywords_in_ai_overview||0;
+const aioPct=semAio.pct_ai_overview||0;
+const totalKw=semAio.total_keywords_analyzed||1;
+h+=`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
+<div style="text-align:center;padding:12px;background:var(--card2);border-radius:10px">
+<div style="font-size:22px;font-weight:700;color:var(--accent);font-family:var(--mono)">${fmt(aioKw)}</div>
+<div style="font-size:10px;color:var(--muted)">KW declenchent<br>un AI Overview</div>
+</div>
+<div style="text-align:center;padding:12px;background:var(--card2);border-radius:10px">
+<div style="font-size:22px;font-weight:700;color:var(--success);font-family:var(--mono)">${fmt(aioIn)}</div>
+<div style="font-size:10px;color:var(--muted)">KW ou le site<br>apparait dans AIO</div>
+</div>
+<div style="text-align:center;padding:12px;background:var(--card2);border-radius:10px">
+<div style="font-size:22px;font-weight:700;font-family:var(--mono)">${aioPct}%</div>
+<div style="font-size:10px;color:var(--muted)">de vos KW ont<br>un AI Overview</div>
+</div>
+</div>`;
+// Top AI keywords table
+const topAiKw=semAio.top_ai_keywords||[];
+if(topAiKw.length){
+h+=`<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Keywords positionnés qui déclenchent un AI Overview</div>`;
+topAiKw.forEach(k=>{
+const posColor=k.position<=3?'var(--success)':k.position<=10?'var(--accent)':k.position<=20?'var(--warn)':'var(--muted)';
+h+=`<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px">
+<span style="min-width:30px;text-align:center;font-weight:700;color:${posColor};font-family:var(--mono)">${k.position}</span>
+<span style="flex:1;font-weight:500">${k.keyword}</span>
+<span style="font-family:var(--mono);color:var(--muted);font-size:11px">${fmt(k.volume)}</span>
+${k.in_ai_overview?'<span style="font-size:9px;background:rgba(81,207,102,.15);color:var(--success);padding:2px 6px;border-radius:8px">dans AIO</span>':''}
+</div>`;
+});
+}
 }else{h+=`<div style="font-size:12px;color:var(--muted)">Aucune donnee</div>`;}
 h+=`</div>`;
+}
 
 // Right — Score par plateforme (progress bars + details expandable)
 h+=`<div class="card"><div class="accent-title">Score par plateforme</div>`;

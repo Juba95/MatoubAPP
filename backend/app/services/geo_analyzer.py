@@ -1039,6 +1039,47 @@ class GEOAnalyzer:
                 "image_links": self._safe_int(row.get("images_num", "0")),
             }
 
+        # 5. AI Overview keywords (SERP feature 51)
+        # Fetch 500 top keywords and analyze AI Overview presence
+        ai_rows = self._semrush_get("domain_organic", {
+            "export_columns": "Ph,Po,Nq,Tr,Fk,Fp",
+            "domain": domain,
+            "database": "fr",
+            "display_limit": "500",
+            "display_sort": "nq_desc",
+        })
+        ai_overview_triggered = []  # Keywords that trigger an AI Overview
+        ai_overview_present = []    # Keywords where domain appears IN AI Overview
+        for row in ai_rows:
+            fk = row.get("SERP Features by Keyword", row.get("Fk", ""))
+            fp = row.get("SERP Features by Position", row.get("Fp", ""))
+            fk_codes = [c.strip() for c in str(fk).split(",") if c.strip()]
+            fp_codes = [c.strip() for c in str(fp).split(",") if c.strip()]
+            if "51" in fk_codes:
+                kw_data = {
+                    "keyword": row.get("Keyword", row.get("Ph", "")),
+                    "position": self._safe_int(
+                        row.get("Position", row.get("Po", "0"))
+                    ),
+                    "volume": self._safe_int(
+                        row.get("Search Volume", row.get("Nq", "0"))
+                    ),
+                    "in_ai_overview": "51" in fp_codes,
+                }
+                ai_overview_triggered.append(kw_data)
+                if "51" in fp_codes:
+                    ai_overview_present.append(kw_data)
+
+        data["ai_overview"] = {
+            "total_keywords_analyzed": len(ai_rows),
+            "keywords_with_ai_overview": len(ai_overview_triggered),
+            "keywords_in_ai_overview": len(ai_overview_present),
+            "pct_ai_overview": round(
+                len(ai_overview_triggered) / max(len(ai_rows), 1) * 100, 1
+            ),
+            "top_ai_keywords": ai_overview_triggered[:20],
+        }
+
         return data
 
     @staticmethod
