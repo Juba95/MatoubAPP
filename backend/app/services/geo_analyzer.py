@@ -66,12 +66,23 @@ class GEOAnalyzer:
         """POST to a DataForSEO endpoint. Returns parsed JSON or None on error."""
         client = self._get_dfs_client()
         if client is None:
+            print(f"[DFS] No client — DATAFORSEO_LOGIN/PASSWORD missing")
             return None
         try:
-            resp = client.post(f"{self._dfs_base_url}{endpoint}", json=payload)
+            url = f"{self._dfs_base_url}{endpoint}"
+            print(f"[DFS] POST {url}")
+            resp = client.post(url, json=payload)
+            print(f"[DFS] Response: {resp.status_code}")
+            if resp.status_code != 200:
+                print(f"[DFS] Error body: {resp.text[:500]}")
             resp.raise_for_status()
-            return resp.json()
-        except Exception:
+            data = resp.json()
+            status = data.get("status_code", "?")
+            msg = data.get("status_message", "")
+            print(f"[DFS] API status: {status} — {msg}")
+            return data
+        except Exception as e:
+            print(f"[DFS] Exception: {e}")
             return None
 
     # ------------------------------------------------------------------
