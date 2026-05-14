@@ -934,7 +934,7 @@ class GEOAnalyzer:
         if overview:
             row = overview[0]
             data["domain_overview"] = {
-                "authority_score": self._safe_int(
+                "semrush_rank": self._safe_int(
                     row.get("Rank", row.get("Rk", "0"))
                 ),
                 "organic_keywords": self._safe_int(
