@@ -852,7 +852,7 @@ document.getElementById('geo-result').innerHTML=h;
 // GENERATOR
 async function loadGenerator(){
 let sites;
-try{sites=await apiFetch('/sites/');}catch(e){document.getElementById('tab-1').innerHTML=`<div class="card" style="color:var(--danger)">Erreur : ${e.message}</div>`;return;}
+try{sites=await apiFetch('/sites/');}catch(e){document.getElementById('tab-2').innerHTML=`<div class="card" style="color:var(--danger)">Erreur : ${e.message}</div>`;return;}
 let h=`<div class="section-title mb-12">Générateur WordPress</div><div class="card">
 <label>Site cible</label><select id="gen-site" style="margin-bottom:16px" onchange="showGenForm()"><option value="">Sélectionner un site...</option>`;
 sites.forEach(s=>{h+=`<option value="${s.id}">${s.name} \u2014 ${s.domain}</option>`;});
@@ -863,7 +863,7 @@ h+=`</select><div id="gen-form" class="hidden">
 <div class="grid2 mb-16"><div><label>Host</label><input id="g-db-host" placeholder="localhost"></div><div><label>Nom BDD</label><input id="g-db-name"></div><div><label>User</label><input id="g-db-user"></div><div><label>Password</label><input id="g-db-pass" type="password"></div></div>
 <button class="btn" onclick="installWP()">Installer WordPress</button>
 </div></div><div id="gen-logs"></div>`;
-document.getElementById('tab-1').innerHTML=h;
+document.getElementById('tab-2').innerHTML=h;
 }
 
 function showGenForm(){document.getElementById('gen-form').classList.toggle('hidden',!document.getElementById('gen-site').value);}
@@ -892,7 +892,7 @@ let geoRegions=[],geoDepts=[],selRegs=[],selDepts=[],geoPreview=null;
 
 async function loadGeoloc(){
 let sites,regions;
-try{[sites,regions]=await Promise.all([apiFetch('/sites/'),apiFetch('/geoloc/regions')]);}catch(e){document.getElementById('tab-2').innerHTML=`<div class="card" style="color:var(--danger)">Erreur : ${e.message}</div>`;return;}
+try{[sites,regions]=await Promise.all([apiFetch('/sites/'),apiFetch('/geoloc/regions')]);}catch(e){document.getElementById('tab-3').innerHTML=`<div class="card" style="color:var(--danger)">Erreur : ${e.message}</div>`;return;}
 geoRegions=regions;selRegs=[];selDepts=[];geoPreview=null;
 let h=`<div class="section-title mb-12">Pages géolocalisées</div><div class="card">
 <div class="grid2 mb-16">
@@ -907,7 +907,7 @@ regions.forEach(r=>{h+=`<button class="btn2 region-btn" style="font-size:10px;pa
 h+=`</div></div><div class="mb-16 hidden" id="geo-depts-wrap"><label>Départements</label><div class="wrap-btns-sm" id="geo-depts"></div></div>
 <div class="flex-gap-10"><button class="btn" onclick="previewGeoloc()">Prévisualiser</button><span id="geo-gen-btn"></span></div>
 </div><div id="geo-result"></div><div id="geo-preview"></div>`;
-document.getElementById('tab-2').innerHTML=h;
+document.getElementById('tab-3').innerHTML=h;
 }
 
 async function toggleRegion(r,el){
@@ -954,7 +954,7 @@ document.getElementById('geo-result').innerHTML=`<div class="card result-box"><d
 
 // SETTINGS
 function loadSettings(){
-document.getElementById('tab-3').innerHTML=`
+document.getElementById('tab-4').innerHTML=`
 <div class="section-title mb-12">Paramètres</div>
 <div class="card"><div class="accent-title">Configuration API</div><div style="font-size:12px;color:var(--muted);line-height:1.8">Les clés API (Claude, DataForSEO, Google OAuth) se configurent dans les variables d'environnement de Coolify.</div></div>
 <div class="card"><div class="accent-title">Compte admin</div><div style="font-size:12px;color:var(--muted)">ADMIN_EMAIL et ADMIN_PASSWORD dans Coolify.</div></div>`;
