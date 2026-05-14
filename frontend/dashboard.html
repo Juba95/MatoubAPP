@@ -796,42 +796,6 @@ h+=`</tbody></table></div>`;
 }else{h+=`<div style="font-size:12px;color:var(--muted)">Aucun concurrent detecte</div>`;}
 h+=`</div>`;
 
-// Right - Backlinks Overview
-h+=`<div class="card"><div class="accent-title">Profil de Backlinks <span style="font-size:10px;color:var(--muted)">Semrush</span></div>`;
-if(semBl.total_backlinks){
-const totalBl=semBl.total_backlinks||0;
-const followPct=totalBl?Math.round((semBl.follow||0)/totalBl*100):0;
-h+=`<div style="text-align:center;margin-bottom:16px">
-<div style="font-size:36px;font-weight:700;color:var(--text);font-family:var(--mono)">${fmt(totalBl)}</div>
-<div style="font-size:11px;color:var(--muted)">backlinks totaux</div>
-</div>
-<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;font-size:12px">
-<div style="padding:10px;background:var(--card2);border-radius:8px;text-align:center">
-<div style="font-weight:700;font-family:var(--mono);font-size:16px;color:var(--accent)">${fmt(semBl.referring_domains||0)}</div>
-<div style="font-size:10px;color:var(--muted)">Domaines referents</div>
-</div>
-<div style="padding:10px;background:var(--card2);border-radius:8px;text-align:center">
-<div style="font-weight:700;font-family:var(--mono);font-size:16px">${fmt(semBl.referring_ips||0)}</div>
-<div style="font-size:10px;color:var(--muted)">IPs referentes</div>
-</div>
-</div>
-<div style="margin-top:12px">
-<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px">
-<span>Follow <b>${fmt(semBl.follow||0)}</b></span>
-<span>Nofollow <b>${fmt(semBl.nofollow||0)}</b></span>
-</div>
-<div style="height:8px;background:var(--card2);border-radius:4px;overflow:hidden;display:flex">
-<div style="height:100%;width:${followPct}%;background:var(--success)"></div>
-<div style="height:100%;width:${100-followPct}%;background:var(--warn)"></div>
-</div>
-<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:2px"><span>${followPct}% follow</span><span>${100-followPct}% nofollow</span></div>
-</div>
-<div style="display:flex;gap:12px;margin-top:12px;font-size:11px;color:var(--muted)">
-<span>Texte: <b style="color:var(--text)">${fmt(semBl.text_links||0)}</b></span>
-<span>Image: <b style="color:var(--text)">${fmt(semBl.image_links||0)}</b></span>
-</div>`;
-}else{h+=`<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px">Aucune donnee backlink disponible</div>`;}
-h+=`</div>`;
 
 h+=`</div>`;// close grid2
 }// end semrush section
@@ -970,15 +934,9 @@ h+=`<tr style="border-bottom:1px solid var(--border)">
 h+=`</tbody></table></div>`;
 }
 
-// ── ROW 4 : Questions IA (Mentions comme Semrush) ──
+// ── ROW 4 : Mentions IA (only if DataForSEO has data) ──
+if(topQ.length){
 h+=`<div class="card mb-12"><div class="accent-title">Mentions dans les réponses IA</div>`;
-if(!topQ.length){
-h+=`<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px">
-<div style="font-size:24px;margin-bottom:8px">&#x1F50D;</div>
-Aucune mention trouvée pour ce domaine dans les réponses IA.<br>
-<span style="font-size:11px">Configurez DATAFORSEO_LOGIN et DATAFORSEO_PASSWORD pour activer cette fonctionnalité,<br>ou le domaine n'est pas encore cité par les LLM.</span>
-</div></div>`;
-} else {
 h+=`<div style="font-size:11px;color:var(--muted);margin-bottom:12px">${fmt(sum.total_mentions||0)} mentions trouvées — voici les questions IA où votre domaine apparaît</div>
 <div style="overflow-x:auto">
 <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:700px">
@@ -1005,11 +963,9 @@ h+=`<tr style="border-bottom:1px solid var(--border)">
 h+=`</tbody></table></div></div>`;
 }
 
-// ── ROW 5 : Domaines concurrents + Entites de marque ──
-{
+// ── ROW 5 : Domaines concurrents + Entites de marque (only if DataForSEO has data) ──
+if(competitors.length||brands.length){
 h+=`<div class="grid2 mb-12">`;
-
-// Left — Domaines concurrents
 h+=`<div class="card"><div class="accent-title">Domaines concurrents</div>`;
 if(competitors.length){
 competitors.forEach(dc=>{
@@ -1020,8 +976,6 @@ h+=`<div class="preview-row">
 });
 }else{h+=`<div style="font-size:12px;color:var(--muted)">Aucun concurrent detecte</div>`;}
 h+=`</div>`;
-
-// Right — Entites de marque
 h+=`<div class="card"><div class="accent-title">Entites de marque</div>`;
 if(brands.length){
 brands.forEach(b=>{
@@ -1032,7 +986,6 @@ h+=`<div class="preview-row">
 });
 }else{h+=`<div style="font-size:12px;color:var(--muted)">Aucune entite detectee</div>`;}
 h+=`</div>`;
-
 h+=`</div>`;
 }
 
