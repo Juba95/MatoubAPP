@@ -109,14 +109,16 @@ header{display:flex;justify-content:space-between;align-items:center;margin-bott
 </header>
 <div class="tabs">
 <button class="tab active" onclick="switchTab(0,this)">Overview</button>
-<button class="tab" onclick="switchTab(1,this)">Générateur WP</button>
-<button class="tab" onclick="switchTab(2,this)">Pages Géoloc</button>
-<button class="tab" onclick="switchTab(3,this)">Paramètres</button>
+<button class="tab" onclick="switchTab(1,this)">Analyse IA / GEO</button>
+<button class="tab" onclick="switchTab(2,this)">Générateur WP</button>
+<button class="tab" onclick="switchTab(3,this)">Pages Géoloc</button>
+<button class="tab" onclick="switchTab(4,this)">Paramètres</button>
 </div>
 <div id="tab-0"></div>
 <div id="tab-1" class="hidden"></div>
 <div id="tab-2" class="hidden"></div>
 <div id="tab-3" class="hidden"></div>
+<div id="tab-4" class="hidden"></div>
 </div>
 </div>
 
@@ -163,11 +165,12 @@ loadOverview();
 function switchTab(n,el){
 document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
 el.classList.add('active');
-for(let i=0;i<4;i++)document.getElementById('tab-'+i).classList.toggle('hidden',i!==n);
+for(let i=0;i<5;i++)document.getElementById('tab-'+i).classList.toggle('hidden',i!==n);
 if(n===0)loadOverview();
-if(n===1)loadGenerator();
-if(n===2)loadGeoloc();
-if(n===3)loadSettings();
+if(n===1)loadGEO();
+if(n===2)loadGenerator();
+if(n===3)loadGeoloc();
+if(n===4)loadSettings();
 }
 
 // OVERVIEW
@@ -534,6 +537,164 @@ catch(e){alert('Erreur : '+e.message);}
 
 function confirmDeleteSite(id,name){
 if(confirm('Supprimer "'+name+'" ?\nToutes les données seront perdues.')){deleteSite(id);}
+}
+
+// ─── ANALYSE IA / GEO ────────────────────────────────────────────────────────
+
+function loadGEO(){
+document.getElementById('tab-1').innerHTML=`
+<div class="section-title mb-12">Analyse IA / GEO</div>
+<div class="card">
+<label>URL à analyser</label>
+<div style="display:flex;gap:8px">
+<input id="geo-url" placeholder="https://www.monsite.fr/ma-page" style="flex:1">
+<button class="btn" onclick="runGEO()">Analyser</button>
+</div>
+<div style="font-size:11px;color:var(--muted);margin-top:6px">Analyse la visibilité IA (GEO) : citabilité, crawlers IA, schema, plateformes (ChatGPT, Gemini, Perplexity...)</div>
+</div>
+<div id="geo-status"></div>
+<div id="geo-result"></div>`;
+}
+
+async function runGEO(){
+const url=document.getElementById('geo-url').value.trim();
+if(!url)return;
+document.getElementById('geo-status').innerHTML='<div class="card" style="color:var(--muted)">Analyse en cours... (10-30 secondes)</div>';
+document.getElementById('geo-result').innerHTML='';
+try{await apiFetch('/geo/analyze',{method:'POST',body:JSON.stringify({url})});}
+catch(e){document.getElementById('geo-status').innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;return;}
+
+const poll=setInterval(async()=>{
+try{
+const d=await apiFetch('/geo/result?url='+encodeURIComponent(url));
+if(d.status==='running')return;
+clearInterval(poll);
+if(d.status==='error'){document.getElementById('geo-status').innerHTML=`<div class="card" style="color:var(--danger)">Erreur : ${d.error}</div>`;return;}
+document.getElementById('geo-status').innerHTML='';
+renderGEO(d);
+}catch(e){clearInterval(poll);document.getElementById('geo-status').innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;}
+},2000);
+}
+
+function scoreColor(s){return s>=70?'var(--success)':s>=40?'var(--warn)':'var(--danger)';}
+
+function renderGEO(d){
+const s=d.scores||{};
+const p=d.platform_readiness||{};
+const c=d.content||{};
+const t=d.technical||{};
+const sc=d.schema||{};
+const cr=d.ai_crawlers||{};
+const llm=d.llm_mentions||{};
+const recs=d.recommendations||[];
+
+let h='';
+
+// GEO Score principal
+h+=`<div class="card" style="text-align:center;padding:28px">
+<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">GEO Score</div>
+<div style="font-size:56px;font-weight:800;font-family:var(--mono);color:${scoreColor(s.geo_score)}">${s.geo_score||0}</div>
+<div style="font-size:12px;color:var(--muted)">/100 — ${s.geo_score>=70?'Bonne visibilité IA':s.geo_score>=40?'Visibilité moyenne':'Visibilité faible'}</div>
+</div>`;
+
+// Sous-scores
+h+=`<div class="metrics">
+<div class="metric"><div class="metric-label">Citabilité</div><div class="metric-val" style="color:${scoreColor(s.citability)}">${s.citability||0}</div></div>
+<div class="metric"><div class="metric-label">Contenu</div><div class="metric-val" style="color:${scoreColor(s.content_quality)}">${s.content_quality||0}</div></div>
+<div class="metric"><div class="metric-label">Technique</div><div class="metric-val" style="color:${scoreColor(s.technical)}">${s.technical||0}</div></div>
+<div class="metric"><div class="metric-label">Crawlers IA</div><div class="metric-val" style="color:${scoreColor(s.crawler_access)}">${s.crawler_access||0}</div></div>
+<div class="metric"><div class="metric-label">Schema</div><div class="metric-val" style="color:${scoreColor(s.schema)}">${s.schema||0}</div></div>
+</div>`;
+
+// Plateformes IA
+h+=`<div class="card mb-12"><div class="accent-title">Visibilité par plateforme IA</div>
+<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px">`;
+const platLabels={google_aio:'Google AIO',chatgpt:'ChatGPT',perplexity:'Perplexity',gemini:'Gemini',bing_copilot:'Bing Copilot'};
+for(const[key,label] of Object.entries(platLabels)){
+const v=p[key]||0;
+h+=`<div style="text-align:center;padding:12px;background:var(--card2);border-radius:8px">
+<div style="font-size:10px;color:var(--muted);margin-bottom:4px">${label}</div>
+<div style="font-size:22px;font-weight:700;font-family:var(--mono);color:${scoreColor(v)}">${v}</div>
+<div style="height:4px;background:var(--border);border-radius:2px;margin-top:6px"><div style="height:100%;width:${v}%;background:${scoreColor(v)};border-radius:2px"></div></div>
+</div>`;
+}
+h+=`</div></div>`;
+
+// Crawlers IA
+h+=`<div class="card mb-12"><div class="accent-title">Accès crawlers IA</div>
+<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:4px;font-size:12px">`;
+for(const[name,info] of Object.entries(cr)){
+const icon=info.status==='allowed'?'<span style="color:var(--success)">&#x2713;</span>':'<span style="color:var(--danger)">&#x2717;</span>';
+h+=`<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--card2);border-radius:4px">
+<span>${info.label||name}</span>${icon}</div>`;
+}
+h+=`</div></div>`;
+
+// Contenu
+h+=`<div class="card mb-12"><div class="accent-title">Analyse du contenu</div>
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center">
+<div style="padding:10px;background:var(--card2);border-radius:8px"><div style="font-size:10px;color:var(--muted)">Mots</div><div style="font-size:18px;font-weight:700;font-family:var(--mono)">${fmt(c.word_count||0)}</div></div>
+<div style="padding:10px;background:var(--card2);border-radius:8px"><div style="font-size:10px;color:var(--muted)">Titres</div><div style="font-size:18px;font-weight:700;font-family:var(--mono)">${c.h_count||0}</div></div>
+<div style="padding:10px;background:var(--card2);border-radius:8px"><div style="font-size:10px;color:var(--muted)">Blocs citables</div><div style="font-size:18px;font-weight:700;font-family:var(--mono)">${c.citable_blocks||0}</div></div>
+<div style="padding:10px;background:var(--card2);border-radius:8px"><div style="font-size:10px;color:var(--muted)">Citabilité</div><div style="font-size:18px;font-weight:700;font-family:var(--mono)">${c.citability_ratio||0}%</div></div>
+</div>
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center;margin-top:8px">
+<div style="padding:10px;background:var(--card2);border-radius:8px"><div style="font-size:10px;color:var(--muted)">Paragraphes</div><div style="font-size:18px;font-weight:700;font-family:var(--mono)">${c.paragraphs||0}</div></div>
+<div style="padding:10px;background:var(--card2);border-radius:8px"><div style="font-size:10px;color:var(--muted)">Listes</div><div style="font-size:18px;font-weight:700;font-family:var(--mono)">${c.lists||0}</div></div>
+<div style="padding:10px;background:var(--card2);border-radius:8px"><div style="font-size:10px;color:var(--muted)">Images</div><div style="font-size:18px;font-weight:700;font-family:var(--mono)">${c.images_with_alt||0}/${c.images||0}</div></div>
+<div style="padding:10px;background:var(--card2);border-radius:8px"><div style="font-size:10px;color:var(--muted)">Liens ext.</div><div style="font-size:18px;font-weight:700;font-family:var(--mono)">${c.external_links||0}</div></div>
+</div></div>`;
+
+// Schema
+h+=`<div class="card mb-12"><div class="accent-title">Données structurées (Schema.org)</div>
+<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">`;
+if(sc.types&&sc.types.length){sc.types.forEach(t=>{h+=`<span class="pill" style="background:var(--accent)20;color:var(--accent)">${t}</span>`;});}
+else{h+=`<span style="font-size:12px;color:var(--danger)">Aucun schema trouvé</span>`;}
+h+=`</div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;font-size:12px">`;
+const checks=[['Organization/LocalBusiness',sc.has_organization],['sameAs (profils sociaux)',sc.has_same_as],['Article/BlogPosting',sc.has_article],['BreadcrumbList',sc.has_breadcrumb],['Person (auteur)',sc.has_person],['speakable',sc.has_speakable]];
+checks.forEach(([label,ok])=>{
+h+=`<div style="padding:4px 8px;background:var(--card2);border-radius:4px">${ok?'<span style="color:var(--success)">&#x2713;</span>':'<span style="color:var(--danger)">&#x2717;</span>'} ${label}</div>`;
+});
+h+=`</div><div style="margin-top:8px;font-size:12px;color:var(--muted)">Score schema : <b style="color:${scoreColor(sc.schema_score||0)}">${sc.schema_score||0}/100</b></div></div>`;
+
+// LLM Mentions
+if(llm.total_mentions>0){
+h+=`<div class="card mb-12"><div class="accent-title">Mentions dans les réponses IA (DataForSEO)</div>
+<div style="font-size:14px;font-weight:700;margin-bottom:10px">${fmt(llm.total_mentions)} mentions trouvées</div>`;
+(llm.mentions||[]).forEach(m=>{
+h+=`<div class="preview-row"><span style="font-weight:500;font-size:12px">${m.question}</span><span class="preview-meta">${m.platform} \u2022 vol. ${fmt(m.ai_volume)}</span></div>`;
+});
+h+=`</div>`;
+}
+
+// Technique
+h+=`<div class="card mb-12"><div class="accent-title">Technique</div>
+<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:4px;font-size:12px">
+<div style="padding:6px 8px;background:var(--card2);border-radius:4px">${t.https?'<span style="color:var(--success)">&#x2713;</span>':'<span style="color:var(--danger)">&#x2717;</span>'} HTTPS</div>
+<div style="padding:6px 8px;background:var(--card2);border-radius:4px">${t.is_ssr?'<span style="color:var(--success)">&#x2713;</span>':'<span style="color:var(--danger)">&#x2717;</span>'} Server-Side Rendering</div>
+<div style="padding:6px 8px;background:var(--card2);border-radius:4px">${t.canonical?'<span style="color:var(--success)">&#x2713;</span>':'<span style="color:var(--danger)">&#x2717;</span>'} Canonical</div>
+<div style="padding:6px 8px;background:var(--card2);border-radius:4px">${t.llms_txt&&t.llms_txt.exists?'<span style="color:var(--success)">&#x2713;</span>':'<span style="color:var(--danger)">&#x2717;</span>'} llms.txt</div>
+<div style="padding:6px 8px;background:var(--card2);border-radius:4px">Title : ${t.title_length||0} chars</div>
+<div style="padding:6px 8px;background:var(--card2);border-radius:4px">Meta desc : ${t.meta_desc_length||0} chars</div>
+<div style="padding:6px 8px;background:var(--card2);border-radius:4px">Temps réponse : ${t.response_time_ms||0}ms</div>
+<div style="padding:6px 8px;background:var(--card2);border-radius:4px">Framework : ${t.framework||'?'}</div>
+</div></div>`;
+
+// Recommandations
+if(recs.length){
+h+=`<div class="card"><div class="accent-title">Recommandations</div>`;
+const prioColors={critical:'var(--danger)',high:'var(--orange)',medium:'var(--warn)',low:'var(--muted)'};
+const prioLabels={critical:'CRITIQUE',high:'IMPORTANT',medium:'MOYEN',low:'MINEUR'};
+recs.forEach(r=>{
+h+=`<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;align-items:flex-start">
+<span class="pill" style="background:${prioColors[r.priority]}20;color:${prioColors[r.priority]};flex-shrink:0">${prioLabels[r.priority]}</span>
+<div><span style="font-weight:600;color:var(--muted)">${r.category}</span> — ${r.text}</div>
+</div>`;
+});
+h+=`</div>`;
+}
+
+document.getElementById('geo-result').innerHTML=h;
 }
 
 // GENERATOR
