@@ -191,12 +191,28 @@ def generate_geoloc(req: GeolocRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Site not found")
 
     villes = load_villes(req.departments, req.regions, req.min_population)
+
+    # Charger les keywords existants (PENDING/VALIDATED/EXECUTING) pour éviter les doublons
+    existing_keywords = set(
+        kw for (kw,) in db.query(Action.keyword).filter(
+            Action.site_id == site.id,
+            Action.action_type == ActionType.GEOLOC,
+            Action.status.in_([ActionStatus.PENDING, ActionStatus.VALIDATED, ActionStatus.EXECUTING]),
+        ).all()
+    )
+
     created = 0
+    skipped = 0
     for v in villes:
         if "{ville}" in req.keyword_template:
             keyword = req.keyword_template.replace("{ville}", v["name"])
         else:
             keyword = f"{req.keyword_template} {v['name']}"
+
+        if keyword in existing_keywords:
+            skipped += 1
+            continue
+
         action = Action(
             site_id=site.id,
             action_type=ActionType.GEOLOC,
@@ -217,12 +233,14 @@ def generate_geoloc(req: GeolocRequest, db: Session = Depends(get_db)):
             },
         )
         db.add(action)
+        existing_keywords.add(keyword)
         created += 1
 
     db.commit()
     return {
-        "message": f"{created} actions géoloc créées dans la file de validation",
+        "message": f"{created} actions géoloc créées dans la file de validation" + (f" ({skipped} doublons ignorés)" if skipped else ""),
         "total": created,
+        "skipped": skipped,
         "estimated_total_cost": round(created * 0.03, 2),
     }
 
