@@ -219,7 +219,10 @@ h+=`<div class="site-row" id="site-row-${si.id}" onclick="toggleSiteConfig(${si.
 h+=`<div id="site-cfg-${si.id}" class="hidden"></div>`;
 
 // Métriques du site
-h+=`<div style="display:grid;grid-template-columns:repeat(5,1fr);text-align:center;border-bottom:1px solid var(--border)">
+const aiScore=si.ai_score;
+const aiCol=aiScore!=null?(aiScore>=70?'var(--success)':aiScore>=40?'var(--warn)':'var(--danger)'):'var(--muted)';
+h+=`<div style="display:grid;grid-template-columns:repeat(6,1fr);text-align:center;border-bottom:1px solid var(--border)">
+<div style="padding:14px 8px;border-right:1px solid var(--border)"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">Note IA</div><div style="font-size:20px;font-weight:700;font-family:var(--mono);color:${aiCol}">${aiScore!=null?aiScore:'\u2014'}</div><div style="font-size:9px;color:var(--muted)">${aiScore!=null?'/100':'non analysé'}</div></div>
 <div style="padding:14px 8px;border-right:1px solid var(--border)"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">Pages indexées</div><div style="font-size:20px;font-weight:700;font-family:var(--mono)">${fmt(si.indexed_pages||0)}</div></div>
 <div style="padding:14px 8px;border-right:1px solid var(--border)"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">Mots-clés</div><div style="font-size:20px;font-weight:700;font-family:var(--mono)">${fmt(si.total_keywords||0)}</div></div>
 <div style="padding:14px 8px;border-right:1px solid var(--border)"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">Pos. moy.</div><div style="font-size:20px;font-weight:700;font-family:var(--mono)">${si.avg_position||'\u2014'}</div>${si.position_delta?`<div style="font-size:11px;color:${deltaCol};font-weight:600">${si.position_delta>0?'+':''}${si.position_delta}</div>`:''}</div>

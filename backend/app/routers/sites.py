@@ -13,6 +13,27 @@ from app.models.keyword import Keyword
 router = APIRouter(prefix="/sites", tags=["sites"], dependencies=[Depends(get_current_user)])
 
 
+def _get_cached_ai_score(domain: str) -> int | None:
+    """Récupère le score IA depuis le cache GEO s'il existe."""
+    try:
+        from app.routers.geo import _analyses
+        for key in (domain, domain.replace("www.", ""), f"www.{domain}"):
+            for prefix in ("https://", "http://", ""):
+                k = f"{prefix}{key}".rstrip("/")
+                data = _analyses.get(k) or _analyses.get(key)
+                if data and data.get("status") == "done":
+                    summary = data.get("summary", {})
+                    return summary.get("ai_visibility_score")
+        # Essayer avec juste le domaine nettoyé
+        clean = domain.replace("https://", "").replace("http://", "").replace("www.", "").rstrip("/")
+        data = _analyses.get(clean)
+        if data and data.get("status") == "done":
+            return data.get("summary", {}).get("ai_visibility_score")
+    except Exception:
+        pass
+    return None
+
+
 class SiteCreate(BaseModel):
     name: str
     domain: str
@@ -72,17 +93,25 @@ def list_sites(db: Session = Depends(get_db)):
         kw_4_10 = kw_base.filter(Keyword.current_position > 3, Keyword.current_position <= 10).count()
         kw_11_20 = kw_base.filter(Keyword.current_position > 10, Keyword.current_position <= 20).count()
 
-        # Top 3 opportunités par site
-        site_opps = (
+        # Top 10 opportunités par site (dédoublonné par keyword)
+        site_opps_raw = (
             db.query(Keyword)
             .filter(Keyword.site_id == s.id, Keyword.impressions > 10, Keyword.current_position > 10)
             .order_by(Keyword.impressions.desc())
-            .limit(3)
+            .limit(50)
             .all()
         )
+        seen_opp = set()
+        site_opps = []
+        for k in site_opps_raw:
+            if k.keyword not in seen_opp:
+                seen_opp.add(k.keyword)
+                site_opps.append(k)
+            if len(site_opps) >= 10:
+                break
 
-        # Top 3 drops par site
-        site_drops = (
+        # Top 10 drops par site (dédoublonné par keyword)
+        site_drops_raw = (
             db.query(Keyword)
             .filter(
                 Keyword.site_id == s.id,
@@ -91,11 +120,19 @@ def list_sites(db: Session = Depends(get_db)):
             )
             .all()
         )
-        drops = sorted(
-            [k for k in site_drops if k.current_position - (k.previous_position or k.current_position) >= 3],
+        drops_all = sorted(
+            [k for k in site_drops_raw if k.current_position - (k.previous_position or k.current_position) >= 3],
             key=lambda k: k.current_position - k.previous_position,
             reverse=True,
-        )[:3]
+        )
+        seen_drop = set()
+        drops = []
+        for k in drops_all:
+            if k.keyword not in seen_drop:
+                seen_drop.add(k.keyword)
+                drops.append(k)
+            if len(drops) >= 10:
+                break
 
         result.append({
             "id": s.id,
@@ -113,6 +150,7 @@ def list_sites(db: Session = Depends(get_db)):
             "position_delta": round((prev_avg_pos or 0) - (avg_pos or 0), 1) if avg_pos and prev_avg_pos else 0,
             "pending_actions": pending_actions or 0,
             "indexed_pages": s.indexed_pages or 0,
+            "ai_score": _get_cached_ai_score(s.domain),
             "sc_connected": bool(s.sc_token_json),
             "sc_property": s.sc_property,
             "distribution": {"top_3": kw_top3, "top_4_10": kw_4_10, "top_11_20": kw_11_20},
