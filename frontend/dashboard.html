@@ -900,9 +900,9 @@ h+=`<div style="margin-bottom:14px;border:1px solid var(--border);border-radius:
 <div style="display:none;padding:6px 14px 10px;border-top:1px solid var(--border);background:var(--bg)">`;
 details.forEach(d=>{
 h+=`<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px">
-<span style="color:${d.passed?'var(--success)':'var(--danger)';};font-size:13px">${d.passed?'&#x2713;':'&#x2717;'}</span>
+<span style="color:${d.passed?'var(--success)':'var(--danger)'};font-size:13px">${d.passed?'&#x2713;':'&#x2717;'}</span>
 <span style="flex:1;color:${d.passed?'var(--text)':'var(--muted)'}">${d.label}</span>
-<span style="font-family:var(--mono);font-size:10px;color:${d.passed?'var(--success)':'var(--muted)'}">${d.passed?'+':'';}${d.points}pts</span>
+<span style="font-family:var(--mono);font-size:10px;color:${d.passed?'var(--success)':'var(--muted)'}">${d.passed?'+':''}${d.points}pts</span>
 </div>`;
 });
 h+=`</div></div>`;
