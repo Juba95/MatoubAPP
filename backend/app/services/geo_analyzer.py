@@ -420,7 +420,11 @@ class GEOAnalyzer:
         # Technical readiness (20 points max)
         pr = result.get("platform_readiness", {})
         if pr:
-            plat_scores = [v for v in pr.values() if isinstance(v, (int, float))]
+            plat_scores = [
+                v["score"] if isinstance(v, dict) else v
+                for v in pr.values()
+                if isinstance(v, (int, float, dict))
+            ]
             if plat_scores:
                 avg_platform = sum(plat_scores) / len(plat_scores)
                 score += avg_platform * 0.2
@@ -748,97 +752,110 @@ class GEOAnalyzer:
         content = result.get("content", {})
         schema = result.get("schema", {})
         crawlers = result.get("ai_crawlers", {})
+        wc = content.get("word_count", 0)
+        hc = content.get("h_count", 0)
+        cb = content.get("citable_blocks", 0)
+        cr = content.get("citability_ratio", 0)
+        lists = content.get("lists", 0)
+        ext_links = content.get("external_links", 0)
+        int_links = content.get("internal_links", 0)
+        imgs_alt = content.get("images_with_alt", 0)
 
         def crawler_ok(name):
             return crawlers.get(name, {}).get("status") == "allowed"
 
-        # Google AI Overviews
-        google_score = 0
-        if tech.get("https"):
-            google_score += 15
-        if content.get("h_count", 0) >= 3:
-            google_score += 15
-        if content.get("lists", 0) >= 1:
-            google_score += 10
-        if schema.get("has_organization"):
-            google_score += 15
-        if schema.get("has_article"):
-            google_score += 10
-        if content.get("word_count", 0) >= 800:
-            google_score += 15
-        if content.get("citability_ratio", 0) >= 20:
-            google_score += 10
-        if crawler_ok("Googlebot"):
-            google_score += 10
+        def build_detail(checks: list[tuple[str, bool, int]]) -> dict:
+            """Build score + details from a list of (label, passed, points)."""
+            score = 0
+            details = []
+            for label, passed, pts in checks:
+                if passed:
+                    score += pts
+                details.append({"label": label, "passed": passed, "points": pts})
+            return {"score": min(score, 100), "details": details}
 
-        # ChatGPT
-        chatgpt_score = 0
-        if crawler_ok("GPTBot"):
-            chatgpt_score += 25
-        if content.get("word_count", 0) >= 500:
-            chatgpt_score += 15
-        if content.get("citable_blocks", 0) >= 5:
-            chatgpt_score += 20
-        if schema.get("has_same_as"):
-            chatgpt_score += 15
-        if content.get("external_links", 0) >= 2:
-            chatgpt_score += 10
-        if tech.get("meta_description"):
-            chatgpt_score += 15
+        # ── Google AI Overviews ──
+        # Poids fort : structured data, contenu long structuré, listes, FAQ
+        google = build_detail([
+            ("Schema Organization", schema.get("has_organization", False), 15),
+            ("Schema Article/BlogPosting", schema.get("has_article", False), 10),
+            ("Schema FAQ", schema.get("has_faq", False), 10),
+            ("BreadcrumbList", schema.get("has_breadcrumb", False), 5),
+            ("Contenu > 800 mots", wc >= 800, 12),
+            ("Structure H2+ (3+)", hc >= 3, 10),
+            ("Listes structurees (ul/ol)", lists >= 1, 8),
+            ("Citabilite > 20%", cr >= 20, 10),
+            ("HTTPS actif", tech.get("https", False), 5),
+            ("Googlebot autorise", crawler_ok("Googlebot"), 10),
+            ("Canonical defini", bool(tech.get("canonical")), 5),
+        ])
 
-        # Perplexity
-        perplexity_score = 0
-        if crawler_ok("PerplexityBot"):
-            perplexity_score += 25
-        if content.get("citable_blocks", 0) >= 3:
-            perplexity_score += 20
-        if content.get("word_count", 0) >= 1000:
-            perplexity_score += 15
-        if content.get("lists", 0) >= 2:
-            perplexity_score += 15
-        if content.get("external_links", 0) >= 1:
-            perplexity_score += 10
-        if schema.get("schemas_found", 0) >= 1:
-            perplexity_score += 15
+        # ── ChatGPT ──
+        # Poids fort : GPTBot autorisé, blocs citables, sources externes, meta desc
+        chatgpt = build_detail([
+            ("GPTBot autorise", crawler_ok("GPTBot"), 20),
+            ("ChatGPT-User autorise", crawler_ok("ChatGPT-User"), 5),
+            ("Blocs citables (5+)", cb >= 5, 15),
+            ("Blocs citables (10+)", cb >= 10, 10),
+            ("Meta description remplie", bool(tech.get("meta_description")), 10),
+            ("Liens externes (2+)", ext_links >= 2, 8),
+            ("sameAs (profils sociaux)", schema.get("has_same_as", False), 10),
+            ("Contenu > 500 mots", wc >= 500, 7),
+            ("Schema Person (auteur)", schema.get("has_person", False), 8),
+            ("speakable", schema.get("has_speakable", False), 7),
+        ])
 
-        # Gemini
-        gemini_score = 0
-        if crawler_ok("Google-Extended"):
-            gemini_score += 20
-        if schema.get("has_organization"):
-            gemini_score += 20
-        if content.get("h_count", 0) >= 4:
-            gemini_score += 15
-        if tech.get("https"):
-            gemini_score += 10
-        if content.get("images_with_alt", 0) >= 2:
-            gemini_score += 15
-        if content.get("word_count", 0) >= 800:
-            gemini_score += 10
-        if schema.get("has_same_as"):
-            gemini_score += 10
+        # ── Perplexity ──
+        # Poids fort : PerplexityBot, sources/citations, listes, contenu long
+        perplexity = build_detail([
+            ("PerplexityBot autorise", crawler_ok("PerplexityBot"), 20),
+            ("Blocs citables (3+)", cb >= 3, 12),
+            ("Blocs citables (8+)", cb >= 8, 8),
+            ("Contenu > 1000 mots", wc >= 1000, 12),
+            ("Listes structurees (2+)", lists >= 2, 10),
+            ("Liens externes (sources)", ext_links >= 1, 10),
+            ("Liens externes (3+)", ext_links >= 3, 5),
+            ("Schema present", schema.get("schemas_found", 0) >= 1, 8),
+            ("Contenu SSR/indexable", tech.get("is_ssr", False), 10),
+            ("HTTPS actif", tech.get("https", False), 5),
+        ])
 
-        # Bing Copilot
-        bing_score = 0
-        if crawler_ok("Bingbot"):
-            bing_score += 20
-        if tech.get("meta_description"):
-            bing_score += 20
-        if content.get("word_count", 0) >= 500:
-            bing_score += 15
-        if schema.get("has_organization"):
-            bing_score += 15
-        if content.get("h_count", 0) >= 3:
-            bing_score += 15
-        if tech.get("https"):
-            bing_score += 15
+        # ── Gemini ──
+        # Poids fort : Google-Extended, schema Organization+sameAs, images, E-E-A-T
+        gemini = build_detail([
+            ("Google-Extended autorise", crawler_ok("Google-Extended"), 18),
+            ("Schema Organization", schema.get("has_organization", False), 15),
+            ("sameAs (entite verifiee)", schema.get("has_same_as", False), 12),
+            ("Schema Person (E-E-A-T)", schema.get("has_person", False), 10),
+            ("Images avec alt (2+)", imgs_alt >= 2, 10),
+            ("Structure H2+ (4+)", hc >= 4, 8),
+            ("Contenu > 800 mots", wc >= 800, 7),
+            ("HTTPS actif", tech.get("https", False), 5),
+            ("Liens internes (3+)", int_links >= 3, 8),
+            ("llms.txt present", tech.get("llms_txt", {}).get("exists", False), 7),
+        ])
+
+        # ── Bing Copilot ──
+        # Poids fort : Bingbot, meta tags, IndexNow, schema, securite
+        bing = build_detail([
+            ("Bingbot autorise", crawler_ok("Bingbot"), 18),
+            ("Meta description remplie", bool(tech.get("meta_description")), 15),
+            ("Title bien dimensionne", 10 <= tech.get("title_length", 0) <= 65, 10),
+            ("Schema Organization", schema.get("has_organization", False), 12),
+            ("Contenu > 500 mots", wc >= 500, 8),
+            ("Structure H2+ (3+)", hc >= 3, 8),
+            ("HTTPS actif", tech.get("https", False), 8),
+            ("HSTS header", tech.get("security_headers", {}).get("hsts", False), 6),
+            ("Open Graph tags", bool(tech.get("og_tags")), 8),
+            ("Canonical defini", bool(tech.get("canonical")), 7),
+        ])
 
         return {
-            "google_aio": min(google_score, 100),
-            "chatgpt": min(chatgpt_score, 100),
-            "perplexity": min(perplexity_score, 100),
-            "gemini": min(gemini_score, 100),
-            "bing_copilot": min(bing_score, 100),
+            "google_aio": google,
+            "chatgpt": chatgpt,
+            "perplexity": perplexity,
+            "gemini": gemini,
+            "bing_copilot": bing,
         }
 
     # ------------------------------------------------------------------
@@ -1079,7 +1096,11 @@ class GEOAnalyzer:
         schema_score = schema.get("schema_score", 0)
 
         # Platform avg (15%)
-        plat_scores = [v for v in platforms.values() if isinstance(v, int)]
+        plat_scores = [
+            v["score"] if isinstance(v, dict) else v
+            for v in platforms.values()
+            if isinstance(v, (int, float, dict))
+        ]
         platform_score = int(sum(plat_scores) / max(len(plat_scores), 1))
 
         # GEO Score composite

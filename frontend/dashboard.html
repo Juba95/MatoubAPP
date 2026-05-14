@@ -678,7 +678,15 @@ const semKw=sem.organic_keywords||[];
 const semComp=sem.organic_competitors||[];
 const semBl=sem.backlinks_overview||{};
 
-if(semOv.authority_score!==undefined||semOv.organic_keywords){
+if(!semOv.authority_score&&!semOv.organic_keywords&&!semKw.length){
+h+=`<div class="card mb-12" style="border-top:3px solid var(--accent)">
+<div class="accent-title" style="display:flex;align-items:center;gap:8px">Semrush — Vue d'ensemble <span style="font-size:10px;background:var(--accent);color:#fff;padding:2px 8px;border-radius:10px">SEO</span></div>
+<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px">
+<div style="font-size:24px;margin-bottom:8px">&#x1F4CA;</div>
+Aucune donnee Semrush disponible.<br>
+<span style="font-size:11px">Verifiez que <b>SEMRUSH_API_KEY</b> est configuree dans .env et redemarrez le serveur.</span>
+</div></div>`;
+} else if(semOv.authority_score!==undefined||semOv.organic_keywords){
 // Semrush KPI row
 const as=semOv.authority_score||0;
 const asColor=as>=60?'var(--success)':as>=30?'var(--warn)':'var(--danger)';
@@ -845,20 +853,41 @@ h+=`<div style="margin-bottom:10px">
 }else{h+=`<div style="font-size:12px;color:var(--muted)">Aucune donnee</div>`;}
 h+=`</div>`;
 
-// Right — Score par plateforme (progress bars)
+// Right — Score par plateforme (progress bars + details expandable)
 h+=`<div class="card"><div class="accent-title">Score par plateforme</div>`;
 const platLabels={google_aio:'Google AIO',chatgpt:'ChatGPT',perplexity:'Perplexity',gemini:'Gemini',bing_copilot:'Bing Copilot'};
+const platIcons={google_aio:'&#x1F50D;',chatgpt:'&#x1F4AC;',perplexity:'&#x26A1;',gemini:'&#x2728;',bing_copilot:'&#x1F916;'};
 for(const[key,label] of Object.entries(platLabels)){
-const v=pr[key]||0;
-h+=`<div style="margin-bottom:10px">
-<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
-<span style="font-weight:500">${label}</span>
+const pData=pr[key]||{};
+const v=typeof pData==='object'?pData.score||0:pData;
+const details=typeof pData==='object'?(pData.details||[]):[];
+const passed=details.filter(d=>d.passed).length;
+const total=details.length;
+const icon=platIcons[key]||'';
+h+=`<div style="margin-bottom:14px;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+<div style="padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:10px" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
+<span style="font-size:16px">${icon}</span>
+<div style="flex:1">
+<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+<span style="font-weight:600">${label}</span>
 <span style="font-weight:700;font-family:var(--mono);color:${scoreColor(v)}">${v}/100</span>
 </div>
-<div style="height:8px;background:var(--card2);border-radius:4px;overflow:hidden">
-<div style="height:100%;width:${v}%;background:${scoreColor(v)};border-radius:4px;transition:width .4s"></div>
+<div style="height:6px;background:var(--card2);border-radius:3px;overflow:hidden">
+<div style="height:100%;width:${v}%;background:${scoreColor(v)};border-radius:3px;transition:width .4s"></div>
 </div>
+</div>
+<span style="font-size:10px;color:var(--muted);white-space:nowrap">${passed}/${total}</span>
+<span style="font-size:10px;color:var(--muted)">&#9660;</span>
+</div>
+<div style="display:none;padding:6px 14px 10px;border-top:1px solid var(--border);background:var(--bg)">`;
+details.forEach(d=>{
+h+=`<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px">
+<span style="color:${d.passed?'var(--success)':'var(--danger)';};font-size:13px">${d.passed?'&#x2713;':'&#x2717;'}</span>
+<span style="flex:1;color:${d.passed?'var(--text)':'var(--muted)'}">${d.label}</span>
+<span style="font-family:var(--mono);font-size:10px;color:${d.passed?'var(--success)':'var(--muted)'}">${d.passed?'+':'';}${d.points}pts</span>
 </div>`;
+});
+h+=`</div></div>`;
 }
 h+=`</div>`;
 h+=`</div>`;
