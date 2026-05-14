@@ -1,10 +1,13 @@
 """
-Analyse GEO (Generative Engine Optimization) — visibilité IA d'un site.
-Inspiré du framework geo-seo-claude + DataForSEO AI Optimization API.
+Analyse GEO (Generative Engine Optimization) — visibilite IA d'un site.
+Combine l'analyse technique locale avec les donnees DataForSEO AI Optimization API
+pour fournir des metriques de visibilite IA de niveau Semrush.
 """
 import httpx
 import json
 import re
+import base64
+from collections import Counter
 from bs4 import BeautifulSoup
 from app.config import get_settings
 from app.services.dataforseo import DataForSEOClient
@@ -31,11 +34,401 @@ AI_CRAWLERS = {
 class GEOAnalyzer:
     def __init__(self):
         self.settings = get_settings()
-        self.client = httpx.Client(timeout=30, follow_redirects=True,
-                                   headers={"User-Agent": "MatoubeAPP-GEO/1.0"})
+        self.client = httpx.Client(
+            timeout=30,
+            follow_redirects=True,
+            headers={"User-Agent": "MatoubeAPP-GEO/1.0"},
+        )
+        # DataForSEO HTTP client (separate, with auth)
+        self._dfs_client = None
+        self._dfs_base_url = "https://api.dataforseo.com/v3"
+
+    def _get_dfs_client(self) -> httpx.Client | None:
+        """Create an authenticated httpx client for DataForSEO API calls."""
+        if not self.settings.dataforseo_login or not self.settings.dataforseo_password:
+            return None
+        if self._dfs_client is None or self._dfs_client.is_closed:
+            creds = base64.b64encode(
+                f"{self.settings.dataforseo_login}:{self.settings.dataforseo_password}".encode()
+            ).decode()
+            proxy = self.settings.proxy_url or None
+            self._dfs_client = httpx.Client(
+                headers={
+                    "Authorization": f"Basic {creds}",
+                    "Content-Type": "application/json",
+                },
+                proxy=proxy,
+                timeout=60,
+            )
+        return self._dfs_client
+
+    def _dfs_post(self, endpoint: str, payload: list[dict]) -> dict | None:
+        """POST to a DataForSEO endpoint. Returns parsed JSON or None on error."""
+        client = self._get_dfs_client()
+        if client is None:
+            return None
+        try:
+            resp = client.post(f"{self._dfs_base_url}{endpoint}", json=payload)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
+    # Domain-level AI Visibility Analysis
+    # ------------------------------------------------------------------
+
+    def analyze_domain(self, domain: str) -> dict:
+        """Full domain-level AI visibility analysis combining DataForSEO
+        AI Optimization data with technical analysis of the homepage."""
+        domain = domain.strip().lower()
+        if domain.startswith("http"):
+            domain = domain.split("//")[-1].split("/")[0]
+        if domain.startswith("www."):
+            domain = domain[4:]
+
+        result = {
+            "domain": domain,
+            "summary": {
+                "total_mentions": 0,
+                "total_citations": 0,
+                "total_pages_mentioned": 0,
+                "ai_visibility_score": 0,
+            },
+            "mentions_by_platform": [],
+            "top_pages": [],
+            "top_questions": [],
+            "brand_entities": [],
+            "competing_domains": [],
+            "crawlers": {},
+            "technical": {},
+            "content": {},
+            "schema": {},
+            "platform_readiness": {},
+            "recommendations": [],
+        }
+
+        # --- DataForSEO AI Optimization calls ---
+        dfs_target = [{
+            "domain": domain,
+            "search_filter": "include",
+            "search_scope": "any",
+            "include_subdomains": True,
+        }]
+
+        # A. LLM Mentions Search (Google AIO + ChatGPT)
+        google_mentions = self._fetch_llm_mentions_search(dfs_target, "google")
+        chatgpt_mentions = self._fetch_llm_mentions_search(dfs_target, "chat_gpt")
+        all_mention_items = google_mentions + chatgpt_mentions
+
+        # B. LLM Mentions Aggregated Metrics
+        agg_metrics = self._fetch_llm_aggregated_metrics(dfs_target)
+
+        # C. LLM Mentions Top Pages
+        top_pages_data = self._fetch_llm_top_pages(dfs_target)
+
+        # --- Build top_questions ---
+        for item in all_mention_items:
+            answer_raw = item.get("answer", "") or ""
+            sources = item.get("sources", []) or []
+            brand_ents = item.get("brand_entities", []) or []
+            is_cited = any(
+                domain in (s.get("domain", "") or "") for s in sources
+            )
+            result["top_questions"].append({
+                "question": item.get("question", ""),
+                "answer_preview": answer_raw[:200],
+                "platform": item.get("platform", ""),
+                "ai_volume": item.get("ai_search_volume", 0) or 0,
+                "is_cited": is_cited,
+                "brands_count": len(brand_ents),
+                "sources_count": len(sources),
+            })
+
+        # --- Build brand_entities (aggregate across all mentions) ---
+        entity_counter: dict[str, dict] = {}
+        for item in all_mention_items:
+            for ent in item.get("brand_entities", []) or []:
+                title = ent.get("title", "")
+                if not title:
+                    continue
+                if title not in entity_counter:
+                    entity_counter[title] = {
+                        "title": title,
+                        "category": ent.get("category", ""),
+                        "count": 0,
+                    }
+                entity_counter[title]["count"] += 1
+        result["brand_entities"] = sorted(
+            entity_counter.values(), key=lambda x: x["count"], reverse=True
+        )
+
+        # --- Build competing_domains (domains cited alongside ours) ---
+        domain_counter: Counter = Counter()
+        total_citations = 0
+        for item in all_mention_items:
+            for src in item.get("sources", []) or []:
+                src_domain = src.get("domain", "") or ""
+                if src_domain and domain in src_domain:
+                    total_citations += 1
+                elif src_domain:
+                    domain_counter[src_domain] += 1
+        result["competing_domains"] = [
+            {"domain": d, "mentions": c}
+            for d, c in domain_counter.most_common(30)
+        ]
+
+        # --- Aggregated metrics ---
+        if agg_metrics:
+            result["summary"]["total_mentions"] = agg_metrics.get("total_count", 0) or 0
+            # mentions_by_platform from grouping
+            platform_groups = agg_metrics.get("platform", []) or []
+            total_m = result["summary"]["total_mentions"] or 1
+            for pg in platform_groups:
+                name = pg.get("name", pg.get("platform", ""))
+                count = pg.get("count", 0) or 0
+                result["mentions_by_platform"].append({
+                    "platform": name,
+                    "mentions": count,
+                    "pct": round(count / total_m * 100, 1) if total_m else 0,
+                })
+        else:
+            # Fallback: build from search results
+            plat_counter: Counter = Counter()
+            for item in all_mention_items:
+                plat_counter[item.get("platform", "unknown")] += 1
+            total_m = sum(plat_counter.values()) or 1
+            result["summary"]["total_mentions"] = total_m
+            for plat, cnt in plat_counter.most_common():
+                result["mentions_by_platform"].append({
+                    "platform": plat,
+                    "mentions": cnt,
+                    "pct": round(cnt / total_m * 100, 1),
+                })
+
+        # --- Top pages ---
+        if top_pages_data:
+            result["top_pages"] = top_pages_data
+            result["summary"]["total_pages_mentioned"] = len(top_pages_data)
+        else:
+            # Fallback: count from sources in search results
+            page_counter: Counter = Counter()
+            page_cite_counter: Counter = Counter()
+            for item in all_mention_items:
+                for src in item.get("sources", []) or []:
+                    src_domain = src.get("domain", "") or ""
+                    if domain in src_domain:
+                        url = src.get("url", src_domain)
+                        page_counter[url] += 1
+                        page_cite_counter[url] += 1
+            result["top_pages"] = [
+                {"url": u, "mentions": c, "citations": page_cite_counter.get(u, 0)}
+                for u, c in page_counter.most_common(20)
+            ]
+            result["summary"]["total_pages_mentioned"] = len(result["top_pages"])
+
+        result["summary"]["total_citations"] = total_citations
+
+        # --- Technical analysis of homepage ---
+        homepage_url = f"https://{domain}"
+        try:
+            resp = self.client.get(homepage_url)
+            html = resp.text
+            soup = BeautifulSoup(html, "lxml")
+            result["technical"]["status_code"] = resp.status_code
+            result["technical"]["https"] = True
+            result["technical"]["response_time_ms"] = int(
+                resp.elapsed.total_seconds() * 1000
+            )
+            result["technical"].update(self._analyze_technical(resp, soup))
+            result["content"] = self._analyze_content(soup)
+            result["schema"] = self._analyze_schema(soup)
+        except Exception as e:
+            result["technical"]["error"] = str(e)
+
+        # Crawlers
+        result["crawlers"] = self._analyze_crawlers(domain)
+
+        # llms.txt
+        result["technical"]["llms_txt"] = self._check_llms_txt(domain)
+
+        # Platform readiness
+        result["platform_readiness"] = self._score_platforms({
+            "technical": result["technical"],
+            "content": result["content"],
+            "schema": result["schema"],
+            "ai_crawlers": result["crawlers"],
+        })
+
+        # AI Visibility Score (composite 0-100)
+        result["summary"]["ai_visibility_score"] = self._compute_ai_visibility_score(
+            result
+        )
+
+        # Recommendations
+        result["recommendations"] = self._generate_recommendations({
+            "scores": {
+                "geo_score": result["summary"]["ai_visibility_score"],
+            },
+            "content": result["content"],
+            "schema": result["schema"],
+            "technical": result["technical"],
+            "ai_crawlers": result["crawlers"],
+        })
+
+        return result
+
+    # ------------------------------------------------------------------
+    # DataForSEO API Fetchers
+    # ------------------------------------------------------------------
+
+    def _fetch_llm_mentions_search(
+        self, target: list[dict], platform: str
+    ) -> list[dict]:
+        """Call LLM Mentions Search endpoint for a given platform.
+        Returns a list of mention items."""
+        data = self._dfs_post(
+            "/ai_optimization/llm_mentions/search/live",
+            [{
+                "target": target,
+                "platform": platform,
+                "location_code": 2250,
+                "language_code": "fr",
+                "limit": 50,
+            }],
+        )
+        if not data:
+            return []
+        try:
+            tasks = data.get("tasks", [])
+            if not tasks:
+                return []
+            result_list = tasks[0].get("result", [])
+            if not result_list:
+                return []
+            return result_list[0].get("items", []) or []
+        except Exception:
+            return []
+
+    def _fetch_llm_aggregated_metrics(self, target: list[dict]) -> dict | None:
+        """Call LLM Mentions Aggregated Metrics endpoint.
+        Returns the first result item or None."""
+        data = self._dfs_post(
+            "/ai_optimization/llm_mentions/aggregated_metrics/live",
+            [{
+                "target": target,
+                "location_code": 2250,
+                "language_code": "fr",
+                "internal_list_limit": 20,
+            }],
+        )
+        if not data:
+            return None
+        try:
+            tasks = data.get("tasks", [])
+            if not tasks:
+                return None
+            result_list = tasks[0].get("result", [])
+            if not result_list:
+                return None
+            return result_list[0]
+        except Exception:
+            return None
+
+    def _fetch_llm_top_pages(self, target: list[dict]) -> list[dict]:
+        """Call LLM Mentions Top Pages endpoint.
+        Returns a list of page dicts with url, mentions, citations."""
+        data = self._dfs_post(
+            "/ai_optimization/llm_mentions/top_pages/live",
+            [{
+                "target": target,
+                "location_code": 2250,
+                "language_code": "fr",
+                "limit": 20,
+            }],
+        )
+        if not data:
+            return []
+        try:
+            tasks = data.get("tasks", [])
+            if not tasks:
+                return []
+            result_list = tasks[0].get("result", [])
+            if not result_list:
+                return []
+            items = result_list[0].get("items", []) or []
+            pages = []
+            for item in items:
+                pages.append({
+                    "url": item.get("page", item.get("url", "")),
+                    "mentions": item.get("count", item.get("mentions", 0)) or 0,
+                    "citations": item.get("citations", item.get("citation_count", 0)) or 0,
+                })
+            return pages
+        except Exception:
+            return []
+
+    # ------------------------------------------------------------------
+    # AI Visibility Score
+    # ------------------------------------------------------------------
+
+    def _compute_ai_visibility_score(self, result: dict) -> int:
+        """Compute a composite 0-100 AI visibility score."""
+        score = 0.0
+
+        # Mentions volume (40 points max)
+        total_mentions = result["summary"]["total_mentions"]
+        if total_mentions >= 500:
+            score += 40
+        elif total_mentions >= 100:
+            score += 30
+        elif total_mentions >= 50:
+            score += 20
+        elif total_mentions >= 10:
+            score += 10
+        elif total_mentions >= 1:
+            score += 5
+
+        # Citations (20 points max)
+        total_citations = result["summary"]["total_citations"]
+        if total_citations >= 50:
+            score += 20
+        elif total_citations >= 20:
+            score += 15
+        elif total_citations >= 5:
+            score += 10
+        elif total_citations >= 1:
+            score += 5
+
+        # Platform diversity (10 points max)
+        platforms_present = len(result["mentions_by_platform"])
+        score += min(platforms_present * 2.5, 10)
+
+        # Pages mentioned (10 points max)
+        pages = result["summary"]["total_pages_mentioned"]
+        if pages >= 10:
+            score += 10
+        elif pages >= 5:
+            score += 7
+        elif pages >= 1:
+            score += 3
+
+        # Technical readiness (20 points max)
+        pr = result.get("platform_readiness", {})
+        if pr:
+            plat_scores = [v for v in pr.values() if isinstance(v, (int, float))]
+            if plat_scores:
+                avg_platform = sum(plat_scores) / len(plat_scores)
+                score += avg_platform * 0.2
+
+        return min(int(score), 100)
+
+    # ------------------------------------------------------------------
+    # URL-level Analysis (original method)
+    # ------------------------------------------------------------------
 
     def analyze(self, url: str) -> dict:
-        """Analyse GEO complète d'une URL."""
+        """Analyse GEO complete d'une URL."""
         result = {
             "url": url,
             "domain": self._extract_domain(url),
@@ -56,7 +449,9 @@ class GEOAnalyzer:
             soup = BeautifulSoup(html, "lxml")
             result["technical"]["status_code"] = resp.status_code
             result["technical"]["https"] = url.startswith("https")
-            result["technical"]["response_time_ms"] = int(resp.elapsed.total_seconds() * 1000)
+            result["technical"]["response_time_ms"] = int(
+                resp.elapsed.total_seconds() * 1000
+            )
         except Exception as e:
             result["technical"]["error"] = str(e)
             return result
@@ -90,6 +485,10 @@ class GEOAnalyzer:
         result["recommendations"] = self._generate_recommendations(result)
 
         return result
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
     def _extract_domain(self, url: str) -> str:
         d = url.split("//")[-1].split("/")[0]
@@ -132,15 +531,20 @@ class GEOAnalyzer:
             "meta_description": meta_desc,
             "meta_desc_length": len(meta_desc),
             "canonical": (soup.find("link", rel="canonical") or {}).get("href"),
-            "language": soup.find("html").get("lang", "") if soup.find("html") else "",
+            "language": (
+                soup.find("html").get("lang", "") if soup.find("html") else ""
+            ),
             "security_headers": security,
             "is_ssr": is_ssr,
-            "framework": next((k for k, v in ssr_signals.items() if v), "unknown"),
+            "framework": next(
+                (k for k, v in ssr_signals.items() if v), "unknown"
+            ),
             "og_tags": {k: v for k, v in meta_tags.items() if k.startswith("og:")},
         }
 
     def _analyze_content(self, soup) -> dict:
-        # Extraire le texte
+        # Clone soup to avoid modifying the original
+        soup = BeautifulSoup(str(soup), "lxml")
         for tag in soup(["script", "style", "nav", "footer", "header"]):
             tag.decompose()
 
@@ -158,7 +562,9 @@ class GEOAnalyzer:
         # Paragraphes
         paragraphs = soup.find_all("p")
         para_count = len(paragraphs)
-        avg_para_length = sum(len(p.get_text().split()) for p in paragraphs) / max(para_count, 1)
+        avg_para_length = (
+            sum(len(p.get_text().split()) for p in paragraphs) / max(para_count, 1)
+        )
 
         # Listes
         lists = len(soup.find_all(["ul", "ol"]))
@@ -172,7 +578,7 @@ class GEOAnalyzer:
         internal = sum(1 for a in links if not a["href"].startswith("http"))
         external = len(links) - internal
 
-        # Citability — les blocs qui pourraient être cités par un LLM
+        # Citability -- blocs qui pourraient etre cites par un LLM
         citable_blocks = 0
         for p in paragraphs:
             t = p.get_text(strip=True)
@@ -192,7 +598,9 @@ class GEOAnalyzer:
             "internal_links": internal,
             "external_links": external,
             "citable_blocks": citable_blocks,
-            "citability_ratio": round(citable_blocks / max(para_count, 1) * 100),
+            "citability_ratio": round(
+                citable_blocks / max(para_count, 1) * 100
+            ),
         }
 
     def _analyze_schema(self, soup) -> dict:
@@ -243,7 +651,7 @@ class GEOAnalyzer:
         if has_org:
             score += 20
         if has_same_as:
-            score += 15  # Critical for GEO entity linking
+            score += 15
         if has_article:
             score += 15
         if has_breadcrumb:
@@ -276,27 +684,45 @@ class GEOAnalyzer:
                 robots = resp.text.lower()
                 for crawler, label in AI_CRAWLERS.items():
                     if crawler.lower() in robots:
-                        # Check if disallowed
                         blocked = False
                         lines = robots.split("\n")
                         in_agent = False
                         for line in lines:
                             line = line.strip()
-                            if line.startswith("user-agent:") and crawler.lower() in line:
+                            if (
+                                line.startswith("user-agent:")
+                                and crawler.lower() in line
+                            ):
                                 in_agent = True
                             elif line.startswith("user-agent:") and in_agent:
                                 in_agent = False
                             elif in_agent and line.startswith("disallow: /"):
                                 blocked = True
-                        result[crawler] = {"label": label, "status": "blocked" if blocked else "allowed", "in_robots": True}
+                        result[crawler] = {
+                            "label": label,
+                            "status": "blocked" if blocked else "allowed",
+                            "in_robots": True,
+                        }
                     else:
-                        result[crawler] = {"label": label, "status": "allowed", "in_robots": False}
+                        result[crawler] = {
+                            "label": label,
+                            "status": "allowed",
+                            "in_robots": False,
+                        }
             else:
                 for crawler, label in AI_CRAWLERS.items():
-                    result[crawler] = {"label": label, "status": "allowed", "in_robots": False}
+                    result[crawler] = {
+                        "label": label,
+                        "status": "allowed",
+                        "in_robots": False,
+                    }
         except Exception:
             for crawler, label in AI_CRAWLERS.items():
-                result[crawler] = {"label": label, "status": "unknown", "in_robots": False}
+                result[crawler] = {
+                    "label": label,
+                    "status": "unknown",
+                    "in_robots": False,
+                }
         return result
 
     def _check_llms_txt(self, domain: str) -> dict:
@@ -304,7 +730,11 @@ class GEOAnalyzer:
             resp = self.client.get(f"https://{domain}/llms.txt")
             if resp.status_code == 200:
                 content = resp.text[:2000]
-                return {"exists": True, "length": len(resp.text), "preview": content}
+                return {
+                    "exists": True,
+                    "length": len(resp.text),
+                    "preview": content,
+                }
             return {"exists": False}
         except Exception:
             return {"exists": False}
@@ -408,20 +838,24 @@ class GEOAnalyzer:
         }
 
     def _get_llm_mentions(self, domain: str) -> dict:
-        """Récupère les mentions LLM via DataForSEO AI Optimization API."""
+        """Recupere les mentions LLM via DataForSEO AI Optimization API.
+        Used by the URL-level analyze() method."""
         try:
             dfs = DataForSEOClient()
             with dfs._client() as client:
-                # Mentions du domaine
                 resp = client.post(
                     f"{dfs.BASE_URL}/ai_optimization/llm_mentions/search/live",
                     json=[{
-                        "target": [{"domain": domain, "search_filter": "include", "search_scope": "any"}],
+                        "target": [{
+                            "domain": domain,
+                            "search_filter": "include",
+                            "search_scope": "any",
+                        }],
                         "platform": "google",
-                        "location_code": 2250,  # France
+                        "location_code": 2250,
                         "language_code": "fr",
                         "limit": 20,
-                    }]
+                    }],
                 )
                 data = resp.json()
                 tasks = data.get("tasks", [])
@@ -496,8 +930,9 @@ class GEOAnalyzer:
         tech_score = min(tech_score, 100)
 
         # Crawler Access (15%)
-        allowed = sum(1 for c in crawlers.values() if c.get("status") == "allowed")
-        blocked = sum(1 for c in crawlers.values() if c.get("status") == "blocked")
+        allowed = sum(
+            1 for c in crawlers.values() if c.get("status") == "allowed"
+        )
         total_crawlers = len(crawlers) or 1
         crawler_score = int((allowed / total_crawlers) * 100)
 
@@ -530,7 +965,6 @@ class GEOAnalyzer:
 
     def _generate_recommendations(self, result: dict) -> list:
         recs = []
-        scores = result.get("scores", {})
         content = result.get("content", {})
         schema = result.get("schema", {})
         tech = result.get("technical", {})
@@ -538,32 +972,106 @@ class GEOAnalyzer:
 
         # Critical
         if not tech.get("https"):
-            recs.append({"priority": "critical", "category": "Technique", "text": "Passer le site en HTTPS"})
+            recs.append({
+                "priority": "critical",
+                "category": "Technique",
+                "text": "Passer le site en HTTPS",
+            })
         if not tech.get("is_ssr"):
-            recs.append({"priority": "critical", "category": "Technique", "text": "Le contenu semble rendu en JavaScript (SPA) — les crawlers IA ne peuvent pas le lire. Passer en SSR."})
+            recs.append({
+                "priority": "critical",
+                "category": "Technique",
+                "text": (
+                    "Le contenu semble rendu en JavaScript (SPA) — les crawlers "
+                    "IA ne peuvent pas le lire. Passer en SSR."
+                ),
+            })
 
-        blocked = [f"{c} ({v['label']})" for c, v in crawlers.items() if v.get("status") == "blocked"]
+        blocked = [
+            f"{c} ({v['label']})"
+            for c, v in crawlers.items()
+            if v.get("status") == "blocked"
+        ]
         if blocked:
-            recs.append({"priority": "critical", "category": "Crawlers IA", "text": f"Crawlers bloqués dans robots.txt : {', '.join(blocked)}. Débloquer pour être visible des IA."})
+            recs.append({
+                "priority": "critical",
+                "category": "Crawlers IA",
+                "text": (
+                    f"Crawlers bloques dans robots.txt : {', '.join(blocked)}. "
+                    "Debloquer pour etre visible des IA."
+                ),
+            })
 
         # High
         if not schema.get("has_organization") and not schema.get("has_same_as"):
-            recs.append({"priority": "high", "category": "Schema", "text": "Ajouter un schema Organization/LocalBusiness avec sameAs (liens vers les profils sociaux). C'est le signal le plus impactant pour le GEO."})
+            recs.append({
+                "priority": "high",
+                "category": "Schema",
+                "text": (
+                    "Ajouter un schema Organization/LocalBusiness avec sameAs "
+                    "(liens vers les profils sociaux). C'est le signal le plus "
+                    "impactant pour le GEO."
+                ),
+            })
         if content.get("word_count", 0) < 800:
-            recs.append({"priority": "high", "category": "Contenu", "text": f"Contenu trop court ({content.get('word_count', 0)} mots). Viser 1500+ mots pour être citable par les IA."})
+            recs.append({
+                "priority": "high",
+                "category": "Contenu",
+                "text": (
+                    f"Contenu trop court ({content.get('word_count', 0)} mots). "
+                    "Viser 1500+ mots pour etre citable par les IA."
+                ),
+            })
         if content.get("citability_ratio", 0) < 15:
-            recs.append({"priority": "high", "category": "Contenu", "text": "Taux de citabilité faible. Ajouter des paragraphes courts (20-60 mots) qui répondent directement à des questions."})
+            recs.append({
+                "priority": "high",
+                "category": "Contenu",
+                "text": (
+                    "Taux de citabilite faible. Ajouter des paragraphes courts "
+                    "(20-60 mots) qui repondent directement a des questions."
+                ),
+            })
 
         # Medium
         if not tech.get("llms_txt", {}).get("exists"):
-            recs.append({"priority": "medium", "category": "IA", "text": "Créer un fichier llms.txt à la racine du site pour guider les LLM."})
+            recs.append({
+                "priority": "medium",
+                "category": "IA",
+                "text": (
+                    "Creer un fichier llms.txt a la racine du site pour guider "
+                    "les LLM."
+                ),
+            })
         if content.get("lists", 0) == 0:
-            recs.append({"priority": "medium", "category": "Contenu", "text": "Ajouter des listes (ul/ol) — les IA les citent plus facilement."})
+            recs.append({
+                "priority": "medium",
+                "category": "Contenu",
+                "text": (
+                    "Ajouter des listes (ul/ol) — les IA les citent plus "
+                    "facilement."
+                ),
+            })
         if content.get("images_with_alt", 0) < content.get("images", 0):
-            recs.append({"priority": "medium", "category": "Contenu", "text": f"{content.get('images',0) - content.get('images_with_alt',0)} images sans attribut alt."})
+            missing = content.get("images", 0) - content.get("images_with_alt", 0)
+            recs.append({
+                "priority": "medium",
+                "category": "Contenu",
+                "text": f"{missing} images sans attribut alt.",
+            })
         if not schema.get("has_article"):
-            recs.append({"priority": "medium", "category": "Schema", "text": "Ajouter un schema Article/BlogPosting pour les pages de contenu."})
+            recs.append({
+                "priority": "medium",
+                "category": "Schema",
+                "text": (
+                    "Ajouter un schema Article/BlogPosting pour les pages de "
+                    "contenu."
+                ),
+            })
         if not schema.get("has_breadcrumb"):
-            recs.append({"priority": "medium", "category": "Schema", "text": "Ajouter un schema BreadcrumbList pour la navigation."})
+            recs.append({
+                "priority": "medium",
+                "category": "Schema",
+                "text": "Ajouter un schema BreadcrumbList pour la navigation.",
+            })
 
         return recs

@@ -541,154 +541,306 @@ if(confirm('Supprimer "'+name+'" ?\nToutes les données seront perdues.')){delet
 
 // ─── ANALYSE IA / GEO ────────────────────────────────────────────────────────
 
+function scoreColor(s){return s>=70?'var(--success)':s>=40?'var(--warn)':'var(--danger)';}
+function scoreLabel(s){return s>=70?'Bonne visibilite IA':s>=40?'Visibilite moyenne':'Visibilite faible';}
+function checkIcon(ok){return ok?'<span style="color:var(--success)">&#x2713;</span>':'<span style="color:var(--danger)">&#x2717;</span>';}
+function truncate(str,len){if(!str)return '';return str.length>len?str.slice(0,len)+'...':str;}
+function platformIcon(p){
+const map={google:'Google AIO',google_aio:'Google AIO',chatgpt:'ChatGPT',perplexity:'Perplexity',gemini:'Gemini',bing:'Bing Copilot',bing_copilot:'Bing Copilot'};
+return map[p]||p;
+}
+
 function loadGEO(){
 document.getElementById('tab-1').innerHTML=`
 <div class="section-title mb-12">Analyse IA / GEO</div>
 <div class="card">
-<label>URL à analyser</label>
-<div style="display:flex;gap:8px">
-<input id="geo-url" placeholder="https://www.monsite.fr/ma-page" style="flex:1">
-<button class="btn" onclick="runGEO()">Analyser</button>
+<label>Domaine a analyser</label>
+<div style="display:flex;gap:8px;align-items:center">
+<input id="geo-domain" placeholder="lepaviste-pro.fr" style="flex:1">
+<button class="btn" id="geo-btn" onclick="runGEO()">Analyser</button>
 </div>
-<div style="font-size:11px;color:var(--muted);margin-top:6px">Analyse la visibilité IA (GEO) : citabilité, crawlers IA, schema, plateformes (ChatGPT, Gemini, Perplexity...)</div>
+<div style="font-size:11px;color:var(--muted);margin-top:6px">Analyse la visibilite IA de votre domaine : mentions, citations, crawlers IA, schema, plateformes (ChatGPT, Gemini, Perplexity...)</div>
 </div>
 <div id="geo-status"></div>
 <div id="geo-result"></div>`;
 }
 
 async function runGEO(){
-const url=document.getElementById('geo-url').value.trim();
-if(!url)return;
-document.getElementById('geo-status').innerHTML='<div class="card" style="color:var(--muted)">Analyse en cours... (10-30 secondes)</div>';
+const domain=document.getElementById('geo-domain').value.trim().replace(/^https?:\/\//,'').replace(/\/.*$/,'');
+if(!domain)return;
+const btn=document.getElementById('geo-btn');
+btn.disabled=true;btn.textContent='Analyse...';
+document.getElementById('geo-status').innerHTML=`<div class="card" style="display:flex;align-items:center;gap:12px;color:var(--muted)">
+<div style="width:20px;height:20px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite"></div>
+<div><div style="font-weight:600;color:var(--text);margin-bottom:2px">Analyse en cours pour ${domain}</div>
+<div style="font-size:11px">Collecte des mentions IA, citations, crawlers, schema... (30-90 secondes)</div></div>
+</div>
+<style>@keyframes spin{to{transform:rotate(360deg)}}</style>`;
 document.getElementById('geo-result').innerHTML='';
-try{await apiFetch('/geo/analyze',{method:'POST',body:JSON.stringify({url})});}
-catch(e){document.getElementById('geo-status').innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;return;}
+
+try{await apiFetch('/geo/analyze',{method:'POST',body:JSON.stringify({url:domain})});}
+catch(e){
+document.getElementById('geo-status').innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;
+btn.disabled=false;btn.textContent='Analyser';return;
+}
 
 const poll=setInterval(async()=>{
 try{
-const d=await apiFetch('/geo/result?url='+encodeURIComponent(url));
+const d=await apiFetch('/geo/result?url='+encodeURIComponent(domain));
 if(d.status==='running')return;
 clearInterval(poll);
+btn.disabled=false;btn.textContent='Analyser';
 if(d.status==='error'){document.getElementById('geo-status').innerHTML=`<div class="card" style="color:var(--danger)">Erreur : ${d.error}</div>`;return;}
 document.getElementById('geo-status').innerHTML='';
 renderGEO(d);
-}catch(e){clearInterval(poll);document.getElementById('geo-status').innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;}
-},2000);
+}catch(e){clearInterval(poll);btn.disabled=false;btn.textContent='Analyser';document.getElementById('geo-status').innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;}
+},3000);
 }
 
-function scoreColor(s){return s>=70?'var(--success)':s>=40?'var(--warn)':'var(--danger)';}
-
 function renderGEO(d){
-const s=d.scores||{};
-const p=d.platform_readiness||{};
-const c=d.content||{};
+const sum=d.summary||{};
+const mbp=d.mentions_by_platform||[];
+const pr=d.platform_readiness||{};
+const topPages=d.top_pages||[];
+const topQ=d.top_questions||[];
+const brands=d.brand_entities||[];
+const competitors=d.competing_domains||[];
+const cr=d.crawlers||{};
 const t=d.technical||{};
+const c=d.content||{};
 const sc=d.schema||{};
-const cr=d.ai_crawlers||{};
-const llm=d.llm_mentions||{};
 const recs=d.recommendations||[];
+const domain=d.domain||'';
 
 let h='';
 
-// GEO Score principal
-h+=`<div class="card" style="text-align:center;padding:28px">
-<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">GEO Score</div>
-<div style="font-size:56px;font-weight:800;font-family:var(--mono);color:${scoreColor(s.geo_score)}">${s.geo_score||0}</div>
-<div style="font-size:12px;color:var(--muted)">/100 — ${s.geo_score>=70?'Bonne visibilité IA':s.geo_score>=40?'Visibilité moyenne':'Visibilité faible'}</div>
+// ── ROW 1 : KPI Cards ──
+const vis=sum.ai_visibility_score||0;
+h+=`<div class="metrics" style="grid-template-columns:repeat(4,1fr)">
+<div class="metric" style="text-align:center;border-top:3px solid ${scoreColor(vis)}">
+<div class="metric-label">AI Visibility Score</div>
+<div class="metric-val" style="font-size:36px;color:${scoreColor(vis)}">${vis}<span style="font-size:14px;color:var(--muted)">/100</span></div>
+<div style="height:6px;background:var(--border);border-radius:3px;margin-top:8px"><div style="height:100%;width:${vis}%;background:${scoreColor(vis)};border-radius:3px;transition:width .5s"></div></div>
+<div style="font-size:10px;color:var(--muted);margin-top:4px">${scoreLabel(vis)}</div>
+</div>
+<div class="metric" style="text-align:center">
+<div class="metric-label">Total Mentions</div>
+<div class="metric-val">${fmt(sum.total_mentions||0)}</div>
+</div>
+<div class="metric" style="text-align:center">
+<div class="metric-label">Total Citations</div>
+<div class="metric-val">${fmt(sum.total_citations||0)}</div>
+</div>
+<div class="metric" style="text-align:center">
+<div class="metric-label">Pages Mentionnees</div>
+<div class="metric-val">${fmt(sum.total_pages_mentioned||0)}</div>
+</div>
 </div>`;
 
-// Sous-scores
-h+=`<div class="metrics">
-<div class="metric"><div class="metric-label">Citabilité</div><div class="metric-val" style="color:${scoreColor(s.citability)}">${s.citability||0}</div></div>
-<div class="metric"><div class="metric-label">Contenu</div><div class="metric-val" style="color:${scoreColor(s.content_quality)}">${s.content_quality||0}</div></div>
-<div class="metric"><div class="metric-label">Technique</div><div class="metric-val" style="color:${scoreColor(s.technical)}">${s.technical||0}</div></div>
-<div class="metric"><div class="metric-label">Crawlers IA</div><div class="metric-val" style="color:${scoreColor(s.crawler_access)}">${s.crawler_access||0}</div></div>
-<div class="metric"><div class="metric-label">Schema</div><div class="metric-val" style="color:${scoreColor(s.schema)}">${s.schema||0}</div></div>
-</div>`;
+// ── ROW 2 : Repartition par LLM + Score par plateforme ──
+h+=`<div class="grid2 mb-12">`;
 
-// Plateformes IA
-h+=`<div class="card mb-12"><div class="accent-title">Visibilité par plateforme IA</div>
-<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px">`;
+// Left — Horizontal bar chart mentions by platform
+h+=`<div class="card"><div class="accent-title">Repartition par LLM</div>`;
+if(mbp.length){
+const maxMentions=Math.max(...mbp.map(x=>x.mentions||0),1);
+mbp.forEach(m=>{
+const pct=m.pct||0;
+const barW=Math.max(((m.mentions||0)/maxMentions)*100,2);
+h+=`<div style="margin-bottom:10px">
+<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+<span style="font-weight:600">${m.platform}</span>
+<span style="color:var(--muted);font-family:var(--mono)">${fmt(m.mentions)} <span style="font-size:10px">(${pct.toFixed(1)}%)</span></span>
+</div>
+<div style="height:8px;background:var(--card2);border-radius:4px;overflow:hidden">
+<div style="height:100%;width:${barW}%;background:var(--accent);border-radius:4px;transition:width .4s"></div>
+</div>
+</div>`;
+});
+}else{h+=`<div style="font-size:12px;color:var(--muted)">Aucune donnee</div>`;}
+h+=`</div>`;
+
+// Right — Score par plateforme (progress bars)
+h+=`<div class="card"><div class="accent-title">Score par plateforme</div>`;
 const platLabels={google_aio:'Google AIO',chatgpt:'ChatGPT',perplexity:'Perplexity',gemini:'Gemini',bing_copilot:'Bing Copilot'};
 for(const[key,label] of Object.entries(platLabels)){
-const v=p[key]||0;
-h+=`<div style="text-align:center;padding:12px;background:var(--card2);border-radius:8px">
-<div style="font-size:10px;color:var(--muted);margin-bottom:4px">${label}</div>
-<div style="font-size:22px;font-weight:700;font-family:var(--mono);color:${scoreColor(v)}">${v}</div>
-<div style="height:4px;background:var(--border);border-radius:2px;margin-top:6px"><div style="height:100%;width:${v}%;background:${scoreColor(v)};border-radius:2px"></div></div>
+const v=pr[key]||0;
+h+=`<div style="margin-bottom:10px">
+<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+<span style="font-weight:500">${label}</span>
+<span style="font-weight:700;font-family:var(--mono);color:${scoreColor(v)}">${v}/100</span>
+</div>
+<div style="height:8px;background:var(--card2);border-radius:4px;overflow:hidden">
+<div style="height:100%;width:${v}%;background:${scoreColor(v)};border-radius:4px;transition:width .4s"></div>
+</div>
 </div>`;
 }
-h+=`</div></div>`;
+h+=`</div>`;
+h+=`</div>`;
 
-// Crawlers IA
-h+=`<div class="card mb-12"><div class="accent-title">Accès crawlers IA</div>
-<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:4px;font-size:12px">`;
-for(const[name,info] of Object.entries(cr)){
-const icon=info.status==='allowed'?'<span style="color:var(--success)">&#x2713;</span>':'<span style="color:var(--danger)">&#x2717;</span>';
-h+=`<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--card2);border-radius:4px">
-<span>${info.label||name}</span>${icon}</div>`;
+// ── ROW 3 : Top Pages Mentionnees ──
+if(topPages.length){
+h+=`<div class="card mb-12"><div class="accent-title">Top Pages Mentionnees</div>
+<table style="width:100%;border-collapse:collapse;font-size:12px">
+<thead><tr style="border-bottom:2px solid var(--border);text-align:left">
+<th style="padding:8px 6px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.3px">Page URL</th>
+<th style="padding:8px 6px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.3px;text-align:right">Mentions</th>
+<th style="padding:8px 6px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.3px;text-align:right">Citations</th>
+</tr></thead><tbody>`;
+topPages.forEach(pg=>{
+h+=`<tr style="border-bottom:1px solid var(--border)">
+<td style="padding:8px 6px"><span style="font-family:var(--mono);font-size:11px;color:var(--accent)">${pg.url}</span></td>
+<td style="padding:8px 6px;text-align:right;font-weight:600;font-family:var(--mono)">${fmt(pg.mentions)}</td>
+<td style="padding:8px 6px;text-align:right;font-weight:600;font-family:var(--mono)">${fmt(pg.citations)}</td>
+</tr>`;
+});
+h+=`</tbody></table></div>`;
 }
-h+=`</div></div>`;
 
-// Contenu
-h+=`<div class="card mb-12"><div class="accent-title">Analyse du contenu</div>
-<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center">
-<div style="padding:10px;background:var(--card2);border-radius:8px"><div style="font-size:10px;color:var(--muted)">Mots</div><div style="font-size:18px;font-weight:700;font-family:var(--mono)">${fmt(c.word_count||0)}</div></div>
-<div style="padding:10px;background:var(--card2);border-radius:8px"><div style="font-size:10px;color:var(--muted)">Titres</div><div style="font-size:18px;font-weight:700;font-family:var(--mono)">${c.h_count||0}</div></div>
-<div style="padding:10px;background:var(--card2);border-radius:8px"><div style="font-size:10px;color:var(--muted)">Blocs citables</div><div style="font-size:18px;font-weight:700;font-family:var(--mono)">${c.citable_blocks||0}</div></div>
-<div style="padding:10px;background:var(--card2);border-radius:8px"><div style="font-size:10px;color:var(--muted)">Citabilité</div><div style="font-size:18px;font-weight:700;font-family:var(--mono)">${c.citability_ratio||0}%</div></div>
-</div>
-<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center;margin-top:8px">
-<div style="padding:10px;background:var(--card2);border-radius:8px"><div style="font-size:10px;color:var(--muted)">Paragraphes</div><div style="font-size:18px;font-weight:700;font-family:var(--mono)">${c.paragraphs||0}</div></div>
-<div style="padding:10px;background:var(--card2);border-radius:8px"><div style="font-size:10px;color:var(--muted)">Listes</div><div style="font-size:18px;font-weight:700;font-family:var(--mono)">${c.lists||0}</div></div>
-<div style="padding:10px;background:var(--card2);border-radius:8px"><div style="font-size:10px;color:var(--muted)">Images</div><div style="font-size:18px;font-weight:700;font-family:var(--mono)">${c.images_with_alt||0}/${c.images||0}</div></div>
-<div style="padding:10px;background:var(--card2);border-radius:8px"><div style="font-size:10px;color:var(--muted)">Liens ext.</div><div style="font-size:18px;font-weight:700;font-family:var(--mono)">${c.external_links||0}</div></div>
-</div></div>`;
-
-// Schema
-h+=`<div class="card mb-12"><div class="accent-title">Données structurées (Schema.org)</div>
-<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">`;
-if(sc.types&&sc.types.length){sc.types.forEach(t=>{h+=`<span class="pill" style="background:var(--accent)20;color:var(--accent)">${t}</span>`;});}
-else{h+=`<span style="font-size:12px;color:var(--danger)">Aucun schema trouvé</span>`;}
-h+=`</div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;font-size:12px">`;
-const checks=[['Organization/LocalBusiness',sc.has_organization],['sameAs (profils sociaux)',sc.has_same_as],['Article/BlogPosting',sc.has_article],['BreadcrumbList',sc.has_breadcrumb],['Person (auteur)',sc.has_person],['speakable',sc.has_speakable]];
-checks.forEach(([label,ok])=>{
-h+=`<div style="padding:4px 8px;background:var(--card2);border-radius:4px">${ok?'<span style="color:var(--success)">&#x2713;</span>':'<span style="color:var(--danger)">&#x2717;</span>'} ${label}</div>`;
+// ── ROW 4 : Questions IA ──
+if(topQ.length){
+h+=`<div class="card mb-12"><div class="accent-title">Questions IA</div>
+<div style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse;font-size:12px;min-width:700px">
+<thead><tr style="border-bottom:2px solid var(--border);text-align:left">
+<th style="padding:8px 6px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.3px">Question</th>
+<th style="padding:8px 6px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.3px;min-width:180px">Apercu reponse</th>
+<th style="padding:8px 6px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.3px">Plateforme</th>
+<th style="padding:8px 6px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.3px;text-align:right">Vol. IA</th>
+<th style="padding:8px 6px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.3px;text-align:center">Statut</th>
+<th style="padding:8px 6px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.3px;text-align:right">Sources</th>
+</tr></thead><tbody>`;
+topQ.forEach(q=>{
+const statusColor=q.is_cited?'var(--success)':'var(--accent2)';
+const statusLabel=q.is_cited?'Citee':'Mentionnee';
+h+=`<tr style="border-bottom:1px solid var(--border)">
+<td style="padding:10px 6px;font-weight:500;max-width:220px"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${(q.question||'').replace(/"/g,'&quot;')}">${q.question||''}</div></td>
+<td style="padding:10px 6px;color:var(--muted);font-size:11px;max-width:200px"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${(q.answer_preview||'').replace(/"/g,'&quot;')}">${truncate(q.answer_preview||'',150)}</div></td>
+<td style="padding:10px 6px">${pillHtml(platformIcon(q.platform),'var(--accent)')}</td>
+<td style="padding:10px 6px;text-align:right;font-family:var(--mono);font-weight:600">${fmt(q.ai_volume)}</td>
+<td style="padding:10px 6px;text-align:center">${pillHtml(statusLabel,statusColor)}</td>
+<td style="padding:10px 6px;text-align:right;font-family:var(--mono)">${q.sources_count||0}</td>
+</tr>`;
 });
-h+=`</div><div style="margin-top:8px;font-size:12px;color:var(--muted)">Score schema : <b style="color:${scoreColor(sc.schema_score||0)}">${sc.schema_score||0}/100</b></div></div>`;
+h+=`</tbody></table></div></div>`;
+}
 
-// LLM Mentions
-if(llm.total_mentions>0){
-h+=`<div class="card mb-12"><div class="accent-title">Mentions dans les réponses IA (DataForSEO)</div>
-<div style="font-size:14px;font-weight:700;margin-bottom:10px">${fmt(llm.total_mentions)} mentions trouvées</div>`;
-(llm.mentions||[]).forEach(m=>{
-h+=`<div class="preview-row"><span style="font-weight:500;font-size:12px">${m.question}</span><span class="preview-meta">${m.platform} \u2022 vol. ${fmt(m.ai_volume)}</span></div>`;
+// ── ROW 5 : Domaines concurrents + Entites de marque ──
+if(competitors.length||brands.length){
+h+=`<div class="grid2 mb-12">`;
+
+// Left — Domaines concurrents
+h+=`<div class="card"><div class="accent-title">Domaines concurrents</div>`;
+if(competitors.length){
+competitors.forEach(dc=>{
+h+=`<div class="preview-row">
+<span style="font-weight:500;font-family:var(--mono);font-size:12px">${dc.domain}</span>
+<span style="font-family:var(--mono);font-weight:600;font-size:12px;color:var(--muted)">${fmt(dc.mentions)} mentions</span>
+</div>`;
 });
+}else{h+=`<div style="font-size:12px;color:var(--muted)">Aucun concurrent detecte</div>`;}
+h+=`</div>`;
+
+// Right — Entites de marque
+h+=`<div class="card"><div class="accent-title">Entites de marque</div>`;
+if(brands.length){
+brands.forEach(b=>{
+h+=`<div class="preview-row">
+<div><span style="font-weight:500;font-size:12px">${b.title}</span> <span style="font-size:10px;color:var(--muted)">${b.category||''}</span></div>
+<span style="font-family:var(--mono);font-weight:600;font-size:12px;color:var(--accent)">${b.count}x</span>
+</div>`;
+});
+}else{h+=`<div style="font-size:12px;color:var(--muted)">Aucune entite detectee</div>`;}
+h+=`</div>`;
+
 h+=`</div>`;
 }
 
-// Technique
-h+=`<div class="card mb-12"><div class="accent-title">Technique</div>
-<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:4px;font-size:12px">
-<div style="padding:6px 8px;background:var(--card2);border-radius:4px">${t.https?'<span style="color:var(--success)">&#x2713;</span>':'<span style="color:var(--danger)">&#x2717;</span>'} HTTPS</div>
-<div style="padding:6px 8px;background:var(--card2);border-radius:4px">${t.is_ssr?'<span style="color:var(--success)">&#x2713;</span>':'<span style="color:var(--danger)">&#x2717;</span>'} Server-Side Rendering</div>
-<div style="padding:6px 8px;background:var(--card2);border-radius:4px">${t.canonical?'<span style="color:var(--success)">&#x2713;</span>':'<span style="color:var(--danger)">&#x2717;</span>'} Canonical</div>
-<div style="padding:6px 8px;background:var(--card2);border-radius:4px">${t.llms_txt&&t.llms_txt.exists?'<span style="color:var(--success)">&#x2713;</span>':'<span style="color:var(--danger)">&#x2717;</span>'} llms.txt</div>
-<div style="padding:6px 8px;background:var(--card2);border-radius:4px">Title : ${t.title_length||0} chars</div>
-<div style="padding:6px 8px;background:var(--card2);border-radius:4px">Meta desc : ${t.meta_desc_length||0} chars</div>
-<div style="padding:6px 8px;background:var(--card2);border-radius:4px">Temps réponse : ${t.response_time_ms||0}ms</div>
-<div style="padding:6px 8px;background:var(--card2);border-radius:4px">Framework : ${t.framework||'?'}</div>
-</div></div>`;
+// ── ROW 6 : Crawlers IA ──
+h+=`<div class="card mb-12"><div class="accent-title">Crawlers IA</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px;font-size:12px">`;
+if(Object.keys(cr).length){
+for(const[name,info] of Object.entries(cr)){
+const allowed=info.status==='allowed';
+h+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:${allowed?'rgba(81,207,102,.06)':'rgba(255,107,107,.06)'};border:1px solid ${allowed?'rgba(81,207,102,.2)':'rgba(255,107,107,.2)'};border-radius:8px">
+<span style="font-weight:500">${info.label||name}</span>
+<span style="font-size:14px">${allowed?'&#x2713;':'&#x2717;'}</span>
+</div>`;
+}
+}else{h+=`<div style="color:var(--muted)">Aucune donnee crawler</div>`;}
+h+=`</div></div>`;
 
-// Recommandations
+// ── ROW 7 : Analyse technique ──
+h+=`<div class="card mb-12"><div class="accent-title">Analyse technique</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px;font-size:12px">`;
+const techChecks=[
+['HTTPS',t.https],
+['Server-Side Rendering',t.is_ssr],
+['Canonical',t.canonical],
+['llms.txt',t.llms_txt&&t.llms_txt.exists],
+];
+techChecks.forEach(([label,ok])=>{
+h+=`<div style="padding:8px 12px;background:var(--card2);border-radius:8px;display:flex;align-items:center;gap:8px">
+${checkIcon(ok)} <span>${label}</span>
+</div>`;
+});
+// Additional tech info
+const techInfo=[
+['Title',`${t.title_length||0} chars`],
+['Meta desc',`${t.meta_desc_length||0} chars`],
+['Temps reponse',`${t.response_time_ms||0}ms`],
+['Framework',t.framework||'?'],
+];
+techInfo.forEach(([label,val])=>{
+h+=`<div style="padding:8px 12px;background:var(--card2);border-radius:8px;display:flex;justify-content:space-between;align-items:center">
+<span style="color:var(--muted)">${label}</span>
+<span style="font-weight:600;font-family:var(--mono)">${val}</span>
+</div>`;
+});
+h+=`</div></div>`;
+
+// ── ROW 8 : Schema.org ──
+h+=`<div class="card mb-12"><div class="accent-title">Schema.org</div>`;
+// Types found
+h+=`<div style="margin-bottom:12px"><div style="font-size:11px;color:var(--muted);margin-bottom:6px">Types detectes</div>
+<div style="display:flex;flex-wrap:wrap;gap:6px">`;
+if(sc.types&&sc.types.length){
+sc.types.forEach(tp=>{h+=pillHtml(tp,'var(--accent)');});
+}else{h+=`<span style="font-size:12px;color:var(--danger)">Aucun schema trouve</span>`;}
+h+=`</div></div>`;
+// Schema checklist
+h+=`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;font-size:12px">`;
+const schemaChecks=[
+['Organization/LocalBusiness',sc.has_organization],
+['sameAs (profils sociaux)',sc.has_same_as],
+['Article/BlogPosting',sc.has_article],
+['BreadcrumbList',sc.has_breadcrumb],
+['Person (auteur)',sc.has_person],
+['speakable',sc.has_speakable]
+];
+schemaChecks.forEach(([label,ok])=>{
+h+=`<div style="padding:6px 10px;background:var(--card2);border-radius:6px">${checkIcon(ok)} ${label}</div>`;
+});
+h+=`</div>`;
+if(sc.schema_score!=null){
+h+=`<div style="margin-top:10px;font-size:12px;color:var(--muted)">Score schema : <b style="color:${scoreColor(sc.schema_score||0)}">${sc.schema_score||0}/100</b></div>`;
+}
+h+=`</div>`;
+
+// ── ROW 9 : Recommandations ──
 if(recs.length){
 h+=`<div class="card"><div class="accent-title">Recommandations</div>`;
 const prioColors={critical:'var(--danger)',high:'var(--orange)',medium:'var(--warn)',low:'var(--muted)'};
 const prioLabels={critical:'CRITIQUE',high:'IMPORTANT',medium:'MOYEN',low:'MINEUR'};
-recs.forEach(r=>{
-h+=`<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;align-items:flex-start">
-<span class="pill" style="background:${prioColors[r.priority]}20;color:${prioColors[r.priority]};flex-shrink:0">${prioLabels[r.priority]}</span>
-<div><span style="font-weight:600;color:var(--muted)">${r.category}</span> — ${r.text}</div>
+// Sort by priority
+const prioOrder={critical:0,high:1,medium:2,low:3};
+const sorted=[...recs].sort((a,b)=>(prioOrder[a.priority]||3)-(prioOrder[b.priority]||3));
+sorted.forEach(r=>{
+const pc=prioColors[r.priority]||'var(--muted)';
+const pl=prioLabels[r.priority]||r.priority;
+h+=`<div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);font-size:12px;align-items:flex-start">
+<span class="pill" style="background:${pc}20;color:${pc};flex-shrink:0;min-width:70px;text-align:center">${pl}</span>
+<div style="flex:1"><span style="font-weight:600;color:var(--text)">${r.category||''}</span> <span style="color:var(--muted)">—</span> ${r.text}</div>
 </div>`;
 });
 h+=`</div>`;
