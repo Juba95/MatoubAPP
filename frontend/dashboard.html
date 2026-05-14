@@ -257,34 +257,63 @@ h+=`</div>`; // fin card site
 });
 }
 
-// Actions
+// Actions — groupées par site
 h+=`<div class="flex-between mt-24 mb-10"><div class="section-title">File de validation <span style="font-size:12px;color:var(--muted);font-weight:400">(${actions.length})</span></div>`;
 if(actions.length>0)h+=`<button class="btn2 btn-sm" onclick="validateAll([${actions.map(a=>a.id).join(',')}])">Tout valider</button>`;
 h+=`</div>`;
 
 if(actions.length===0){h+=`<div class="card text-center" style="color:var(--muted);padding:24px">Aucune action en attente \u2014 lance un scan SEO</div>`;}
-else{actions.forEach(a=>{
-const typeLabel=a.action_type==='optimize'?'Optimisation':a.action_type==='geoloc'?'Géoloc':'Nouveau';
+else{
+// Grouper par site
+const bySite={};
+actions.forEach(a=>{
+const key=a.site_id||0;
+if(!bySite[key])bySite[key]={name:a.site_name||'Site inconnu',actions:[]};
+bySite[key].actions.push(a);
+});
+
+Object.values(bySite).forEach(group=>{
+const siteActions=group.actions;
+const siteIds=siteActions.map(a=>a.id);
+h+=`<div class="card" style="padding:0;overflow:hidden;margin-bottom:16px">`;
+// Header du groupe
+h+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 20px;border-bottom:1px solid var(--border);background:var(--card2)">
+<div style="font-size:13px;font-weight:700">${group.name} <span style="font-size:11px;color:var(--muted);font-weight:400">(${siteActions.length} actions)</span></div>
+<div style="display:flex;gap:6px">
+<button class="btn2 btn-sm" onclick="rejectBatch([${siteIds.join(',')}])">Tout rejeter</button>
+<button class="btn-success" style="font-size:11px;padding:4px 14px" onclick="validateAll([${siteIds.join(',')}])">Tout valider</button>
+</div></div>`;
+
+// Actions du site
+siteActions.forEach(a=>{
+const typeLabel=a.action_type==='optimize'?'Optim.':a.action_type==='geoloc'?'Géoloc':'Nouveau';
 const typeColor=a.action_type==='optimize'?'var(--blue)':a.action_type==='create'?'var(--accent)':'var(--success)';
-const posInfo=a.current_position&&a.previous_position?`${Math.round(a.previous_position)} \u2192 ${Math.round(a.current_position)}`:'';
+const posInfo=a.current_position&&a.previous_position?`${Math.round(a.previous_position)}\u2192${Math.round(a.current_position)}`:'';
 const isFailed=a.status==='failed';
 const isRunning=a.status==='executing'||a.status==='validated';
 const statusPill=isFailed?pillHtml('ÉCHEC','var(--danger)'):isRunning?pillHtml('EN COURS','var(--orange)'):'';
-const borderStyle=isFailed?'border-color:var(--danger)':isRunning?'border-color:var(--orange)':'';
-h+=`<div class="card action-row" style="${borderStyle}">
-<div style="flex:1">
-<div style="font-size:13px;font-weight:700;margin-bottom:3px">${a.keyword||a.title} ${statusPill}</div>
-<div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.4">${(a.description||'').split('\\nERREUR:')[0]}</div>
-${isFailed&&a.description&&a.description.includes('ERREUR:')?`<div style="font-size:11px;color:var(--danger);margin-bottom:8px;background:var(--card2);padding:8px;border-radius:6px;font-family:var(--mono);word-break:break-all">${a.description.split('ERREUR:').pop()}</div>`:''}
-<div class="flex-gap-8">${pillHtml(typeLabel,typeColor)}${a.search_volume>0?`<span style="font-size:10px;color:var(--muted)">vol. ${fmt(a.search_volume)}</span>`:''}${posInfo?`<span class="down" style="font-size:10px">${posInfo}</span>`:''}</div>
-<div style="display:flex;gap:6px;margin-top:10px">
-<button class="btn2 btn-sm" onclick="rejectAction(${a.id})">Rejeter</button>
-${isFailed?`<button class="btn-success" onclick="retryAction(${a.id})">Réessayer</button>`:`<button class="btn-success" onclick="validateAction(${a.id})">${isRunning?'En cours...':'Valider'}</button>`}
-${(isRunning||isFailed)?`<button class="btn2 btn-sm" onclick="showActionLogs(${a.id})">Logs</button>`:''}
+const rowBg=isFailed?'background:#fff0f0':isRunning?'background:#fff8f0':'';
+
+h+=`<div style="display:flex;align-items:center;gap:12px;padding:10px 20px;border-bottom:1px solid var(--border);${rowBg}">
+<div style="flex:1;min-width:0">
+<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+<span style="font-size:13px;font-weight:600">${a.keyword||a.title}</span>${statusPill}
 </div>
+<div style="font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${(a.description||'').split('\\nERREUR:')[0]}</div>
+${isFailed&&a.description&&a.description.includes('ERREUR:')?`<div style="font-size:10px;color:var(--danger);margin-top:4px;font-family:var(--mono)">${a.description.split('ERREUR:').pop().substring(0,100)}</div>`:''}
 </div>
-<div class="action-score">${fmt(Math.round(a.impact_score))}</div>
-</div><div id="action-logs-${a.id}"></div>`;});}
+<div class="flex-gap-8" style="flex-shrink:0">${pillHtml(typeLabel,typeColor)}${a.search_volume>0?`<span style="font-size:10px;color:var(--muted)">vol.${fmt(a.search_volume)}</span>`:''}${posInfo?`<span class="down" style="font-size:10px">${posInfo}</span>`:''}</div>
+<div style="font-size:14px;font-weight:700;color:var(--accent);font-family:var(--mono);min-width:40px;text-align:right">${fmt(Math.round(a.impact_score))}</div>
+<div style="display:flex;gap:4px;flex-shrink:0">
+<button class="btn2 btn-sm" onclick="rejectAction(${a.id})" style="padding:3px 8px">Rej.</button>
+${isFailed?`<button class="btn-success" style="padding:3px 10px" onclick="retryAction(${a.id})">Retry</button>`:`<button class="btn-success" style="padding:3px 10px" onclick="validateAction(${a.id})">${isRunning?'...':'Valid.'}</button>`}
+${(isRunning||isFailed)?`<button class="btn2 btn-sm" onclick="showActionLogs(${a.id})" style="padding:3px 8px">Logs</button>`:''}
+</div>
+</div><div id="action-logs-${a.id}"></div>`;
+});
+h+=`</div>`;
+});
+}
 
 document.getElementById('tab-0').innerHTML=h;
 }
@@ -346,6 +375,7 @@ if(d.logs?.some(l=>l.startsWith('DONE')||l.startsWith('ERROR')))clearInterval(po
 }
 async function rejectAction(id){try{await apiFetch(`/actions/${id}/reject`,{method:'POST'});loadOverview();}catch(e){alert('Erreur rejet : '+e.message);}}
 async function validateAll(ids){try{await apiFetch('/actions/validate-batch',{method:'POST',body:JSON.stringify(ids)});loadOverview();}catch(e){alert('Erreur batch : '+e.message);}}
+async function rejectBatch(ids){if(!confirm(`Rejeter ${ids.length} actions ?`))return;try{for(const id of ids){await apiFetch(`/actions/${id}/reject`,{method:'POST'});}loadOverview();}catch(e){alert('Erreur : '+e.message);}}
 
 // ─── PANNEAU CONFIG SITE ─────────────────────────────────────────────────────
 

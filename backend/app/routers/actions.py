@@ -19,6 +19,7 @@ def list_actions(
     db: Session = Depends(get_db),
 ):
     """Liste des actions triées par impact_score"""
+    from app.models.site import Site
     q = db.query(Action)
     if status:
         try:
@@ -30,10 +31,14 @@ def list_actions(
     if site_id:
         q = q.filter(Action.site_id == site_id)
     actions = q.order_by(desc(Action.impact_score)).limit(limit).all()
+    # Récupérer les noms des sites
+    site_ids = {a.site_id for a in actions}
+    site_names = {s.id: s.name for s in db.query(Site).filter(Site.id.in_(site_ids)).all()} if site_ids else {}
     return [
         {
             "id": a.id,
             "site_id": a.site_id,
+            "site_name": site_names.get(a.site_id, ""),
             "page_id": a.page_id,
             "action_type": a.action_type,
             "status": a.status,
