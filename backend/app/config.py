@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     dataforseo_password: str = ""
     anthropic_api_key: str = ""
     replicate_api_token: str = ""
+    semrush_api_key: str = ""
 
     # Google OAuth (Search Console)
     gsc_client_id: str = ""

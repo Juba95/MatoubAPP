@@ -636,6 +636,7 @@ const sum=d.summary||{};
 const mbp=d.mentions_by_platform||[];
 const pr=d.platform_readiness||{};
 const topPages=d.top_pages||[];
+const sem=d.semrush||{};
 const topQ=d.top_questions||[];
 const brands=d.brand_entities||[];
 const competitors=d.competing_domains||[];
@@ -670,6 +671,143 @@ h+=`<div class="metrics" style="grid-template-columns:repeat(4,1fr)">
 <div class="metric-val">${fmt(sum.total_pages_mentioned||0)}</div>
 </div>
 </div>`;
+
+// ── SEMRUSH DATA ──
+const semOv=sem.domain_overview||{};
+const semKw=sem.organic_keywords||[];
+const semComp=sem.organic_competitors||[];
+const semBl=sem.backlinks_overview||{};
+
+if(semOv.authority_score!==undefined||semOv.organic_keywords){
+// Semrush KPI row
+const as=semOv.authority_score||0;
+const asColor=as>=60?'var(--success)':as>=30?'var(--warn)':'var(--danger)';
+h+=`<div class="card mb-12" style="border-top:3px solid var(--accent)">
+<div class="accent-title" style="display:flex;align-items:center;gap:8px">Semrush — Vue d'ensemble <span style="font-size:10px;background:var(--accent);color:#fff;padding:2px 8px;border-radius:10px">SEO</span></div>
+<div class="metrics" style="grid-template-columns:repeat(5,1fr)">
+<div class="metric" style="text-align:center;border-left:3px solid ${asColor}">
+<div class="metric-label">Authority Score</div>
+<div class="metric-val" style="font-size:28px;color:${asColor}">${as}<span style="font-size:12px;color:var(--muted)">/100</span></div>
+</div>
+<div class="metric" style="text-align:center">
+<div class="metric-label">Keywords Organiques</div>
+<div class="metric-val">${fmt(semOv.organic_keywords||0)}</div>
+</div>
+<div class="metric" style="text-align:center">
+<div class="metric-label">Trafic Organique</div>
+<div class="metric-val">${fmt(semOv.organic_traffic||0)}</div>
+<div style="font-size:10px;color:var(--muted)">visites/mois</div>
+</div>
+<div class="metric" style="text-align:center">
+<div class="metric-label">Backlinks</div>
+<div class="metric-val">${fmt(semOv.backlinks||0)}</div>
+</div>
+<div class="metric" style="text-align:center">
+<div class="metric-label">Cout du Trafic</div>
+<div class="metric-val">$${fmt(semOv.organic_cost||0)}</div>
+<div style="font-size:10px;color:var(--muted)">/mois equivalent</div>
+</div>
+</div>
+</div>`;
+
+// Semrush Top Keywords
+if(semKw.length){
+h+=`<div class="card mb-12">
+<div class="accent-title">Top Keywords Organiques <span style="font-size:10px;color:var(--muted)">(${semKw.length} mots-cles)</span></div>
+<div style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse;font-size:12px;min-width:800px">
+<thead><tr style="border-bottom:2px solid var(--border);text-align:left">
+<th style="padding:8px 6px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.3px">Mot-cle</th>
+<th style="padding:8px 6px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.3px;text-align:center">Position</th>
+<th style="padding:8px 6px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.3px;text-align:right">Volume</th>
+<th style="padding:8px 6px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.3px;text-align:right">CPC</th>
+<th style="padding:8px 6px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.3px;text-align:right">Trafic %</th>
+<th style="padding:8px 6px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.3px;text-align:right">Concurrence</th>
+<th style="padding:8px 6px;font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.3px">URL</th>
+</tr></thead><tbody>`;
+semKw.forEach(k=>{
+const pos=k.position||0;
+const posColor=pos<=3?'var(--success)':pos<=10?'var(--accent)':pos<=20?'var(--warn)':'var(--muted)';
+const posBg=pos<=3?'rgba(81,207,102,.1)':pos<=10?'rgba(113,128,255,.1)':'transparent';
+const compBar=Math.round((k.competition||0)*100);
+h+=`<tr style="border-bottom:1px solid var(--border)">
+<td style="padding:8px 6px;font-weight:600;max-width:200px"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${(k.keyword||'').replace(/"/g,'&quot;')}">${k.keyword||''}</div></td>
+<td style="padding:8px 6px;text-align:center"><span style="display:inline-block;padding:2px 10px;border-radius:10px;font-weight:700;font-family:var(--mono);font-size:13px;color:${posColor};background:${posBg}">${pos}</span></td>
+<td style="padding:8px 6px;text-align:right;font-family:var(--mono)">${fmt(k.volume)}</td>
+<td style="padding:8px 6px;text-align:right;font-family:var(--mono);color:var(--muted)">${k.cpc?'$'+k.cpc.toFixed(2):'-'}</td>
+<td style="padding:8px 6px;text-align:right;font-family:var(--mono);font-weight:600">${k.traffic_pct?k.traffic_pct.toFixed(2)+'%':'-'}</td>
+<td style="padding:8px 6px;text-align:right"><div style="display:flex;align-items:center;gap:6px;justify-content:flex-end"><div style="width:40px;height:5px;background:var(--border);border-radius:3px;overflow:hidden"><div style="height:100%;width:${compBar}%;background:${compBar>=70?'var(--danger)':compBar>=40?'var(--warn)':'var(--success)'};border-radius:3px"></div></div><span style="font-family:var(--mono);font-size:11px">${compBar}%</span></div></td>
+<td style="padding:8px 6px;max-width:180px"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;font-family:var(--mono);color:var(--accent)" title="${(k.url||'').replace(/"/g,'&quot;')}">${k.url?'/'+k.url.split('/').slice(3).join('/'):''}</div></td>
+</tr>`;
+});
+h+=`</tbody></table></div></div>`;
+}
+
+// Semrush Competitors + Backlinks side by side
+h+=`<div class="grid2 mb-12">`;
+
+// Left - Organic Competitors
+h+=`<div class="card"><div class="accent-title">Concurrents Organiques <span style="font-size:10px;color:var(--muted)">Semrush</span></div>`;
+if(semComp.length){
+h+=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+<thead><tr style="border-bottom:2px solid var(--border);text-align:left">
+<th style="padding:6px;font-size:10px;text-transform:uppercase;color:var(--muted)">Domaine</th>
+<th style="padding:6px;font-size:10px;text-transform:uppercase;color:var(--muted);text-align:right">KW communs</th>
+<th style="padding:6px;font-size:10px;text-transform:uppercase;color:var(--muted);text-align:right">Trafic</th>
+<th style="padding:6px;font-size:10px;text-transform:uppercase;color:var(--muted);text-align:right">Niveau</th>
+</tr></thead><tbody>`;
+semComp.forEach(c=>{
+const lvl=Math.round((c.competition_level||0)*100);
+h+=`<tr style="border-bottom:1px solid var(--border)">
+<td style="padding:6px;font-weight:500;font-family:var(--mono);font-size:11px">${c.domain||''}</td>
+<td style="padding:6px;text-align:right;font-family:var(--mono);font-weight:600;color:var(--accent)">${fmt(c.common_keywords)}</td>
+<td style="padding:6px;text-align:right;font-family:var(--mono)">${fmt(c.organic_traffic)}</td>
+<td style="padding:6px;text-align:right"><div style="display:flex;align-items:center;gap:4px;justify-content:flex-end"><div style="width:30px;height:4px;background:var(--border);border-radius:2px;overflow:hidden"><div style="height:100%;width:${lvl}%;background:var(--accent);border-radius:2px"></div></div><span style="font-family:var(--mono);font-size:10px">${lvl}%</span></div></td>
+</tr>`;
+});
+h+=`</tbody></table></div>`;
+}else{h+=`<div style="font-size:12px;color:var(--muted)">Aucun concurrent detecte</div>`;}
+h+=`</div>`;
+
+// Right - Backlinks Overview
+h+=`<div class="card"><div class="accent-title">Profil de Backlinks <span style="font-size:10px;color:var(--muted)">Semrush</span></div>`;
+if(semBl.total_backlinks){
+const totalBl=semBl.total_backlinks||0;
+const followPct=totalBl?Math.round((semBl.follow||0)/totalBl*100):0;
+h+=`<div style="text-align:center;margin-bottom:16px">
+<div style="font-size:36px;font-weight:700;color:var(--text);font-family:var(--mono)">${fmt(totalBl)}</div>
+<div style="font-size:11px;color:var(--muted)">backlinks totaux</div>
+</div>
+<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;font-size:12px">
+<div style="padding:10px;background:var(--card2);border-radius:8px;text-align:center">
+<div style="font-weight:700;font-family:var(--mono);font-size:16px;color:var(--accent)">${fmt(semBl.referring_domains||0)}</div>
+<div style="font-size:10px;color:var(--muted)">Domaines referents</div>
+</div>
+<div style="padding:10px;background:var(--card2);border-radius:8px;text-align:center">
+<div style="font-weight:700;font-family:var(--mono);font-size:16px">${fmt(semBl.referring_ips||0)}</div>
+<div style="font-size:10px;color:var(--muted)">IPs referentes</div>
+</div>
+</div>
+<div style="margin-top:12px">
+<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px">
+<span>Follow <b>${fmt(semBl.follow||0)}</b></span>
+<span>Nofollow <b>${fmt(semBl.nofollow||0)}</b></span>
+</div>
+<div style="height:8px;background:var(--card2);border-radius:4px;overflow:hidden;display:flex">
+<div style="height:100%;width:${followPct}%;background:var(--success)"></div>
+<div style="height:100%;width:${100-followPct}%;background:var(--warn)"></div>
+</div>
+<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:2px"><span>${followPct}% follow</span><span>${100-followPct}% nofollow</span></div>
+</div>
+<div style="display:flex;gap:12px;margin-top:12px;font-size:11px;color:var(--muted)">
+<span>Texte: <b style="color:var(--text)">${fmt(semBl.text_links||0)}</b></span>
+<span>Image: <b style="color:var(--text)">${fmt(semBl.image_links||0)}</b></span>
+</div>`;
+}else{h+=`<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px">Aucune donnee backlink disponible</div>`;}
+h+=`</div>`;
+
+h+=`</div>`;// close grid2
+}// end semrush section
 
 // Explication du scoring
 h+=`<div class="card mb-12" style="font-size:12px;color:var(--muted);line-height:1.8">

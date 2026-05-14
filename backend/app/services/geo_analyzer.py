@@ -106,6 +106,7 @@ class GEOAnalyzer:
             "schema": {},
             "platform_readiness": {},
             "recommendations": [],
+            "semrush": {},
         }
 
         # --- DataForSEO AI Optimization calls ---
@@ -275,6 +276,9 @@ class GEOAnalyzer:
             "technical": result["technical"],
             "ai_crawlers": result["crawlers"],
         })
+
+        # --- Semrush data ---
+        result["semrush"] = self._fetch_semrush_data(domain)
 
         return result
 
@@ -836,6 +840,141 @@ class GEOAnalyzer:
             "gemini": min(gemini_score, 100),
             "bing_copilot": min(bing_score, 100),
         }
+
+    # ------------------------------------------------------------------
+    # Semrush API
+    # ------------------------------------------------------------------
+
+    def _semrush_get(self, report_type: str, params: dict) -> list[dict]:
+        """Call Semrush API and parse the semicolon-delimited response."""
+        api_key = self.settings.semrush_api_key
+        if not api_key:
+            return []
+        base = "https://api.semrush.com/"
+        params = {"type": report_type, "key": api_key, **params}
+        try:
+            resp = self.client.get(base, params=params)
+            if resp.status_code != 200 or "ERROR" in resp.text[:50]:
+                return []
+            lines = resp.text.strip().split("\n")
+            if len(lines) < 2:
+                return []
+            headers = lines[0].split(";")
+            rows = []
+            for line in lines[1:]:
+                vals = line.split(";")
+                if len(vals) == len(headers):
+                    rows.append(dict(zip(headers, vals)))
+            return rows
+        except Exception:
+            return []
+
+    def _fetch_semrush_data(self, domain: str) -> dict:
+        """Fetch comprehensive Semrush data for a domain."""
+        if not self.settings.semrush_api_key:
+            return {}
+
+        data: dict = {
+            "domain_overview": {},
+            "organic_keywords": [],
+            "organic_competitors": [],
+            "backlinks_overview": {},
+        }
+
+        # 1. Domain Overview (authority score, traffic, keywords count)
+        overview = self._semrush_get("domain_ranks", {
+            "export_columns": "Dn,Rk,Or,Ot,Os,Ts,Fk,Fp,Nk,Td",
+            "domain": domain,
+            "database": "fr",
+        })
+        if overview:
+            row = overview[0]
+            data["domain_overview"] = {
+                "authority_score": self._safe_int(row.get("Rk", "0")),
+                "organic_keywords": self._safe_int(row.get("Or", "0")),
+                "organic_traffic": self._safe_int(row.get("Ot", "0")),
+                "organic_cost": self._safe_float(row.get("Os", "0")),
+                "paid_keywords": self._safe_int(row.get("Fk", "0")),
+                "paid_traffic": self._safe_int(row.get("Fp", "0")),
+                "backlinks": self._safe_int(row.get("Nk", "0")),
+                "trust_score": self._safe_float(row.get("Td", "0")),
+            }
+
+        # 2. Top Organic Keywords (positions, volume, traffic %)
+        kw_rows = self._semrush_get("domain_organic", {
+            "export_columns": "Ph,Po,Nq,Cp,Ur,Tr,Tc,Co,Nr,Td",
+            "domain": domain,
+            "database": "fr",
+            "display_limit": "30",
+            "display_sort": "tr_desc",
+            "display_filter": "",
+        })
+        for row in kw_rows:
+            data["organic_keywords"].append({
+                "keyword": row.get("Ph", ""),
+                "position": self._safe_int(row.get("Po", "0")),
+                "volume": self._safe_int(row.get("Nq", "0")),
+                "cpc": self._safe_float(row.get("Cp", "0")),
+                "url": row.get("Ur", ""),
+                "traffic_pct": self._safe_float(row.get("Tr", "0")),
+                "traffic_cost": self._safe_float(row.get("Tc", "0")),
+                "competition": self._safe_float(row.get("Co", "0")),
+                "results": self._safe_int(row.get("Nr", "0")),
+                "trend": row.get("Td", ""),
+            })
+
+        # 3. Organic Competitors
+        comp_rows = self._semrush_get("domain_organic_organic", {
+            "export_columns": "Dn,Cr,Np,Or,Ot,Os,Ts",
+            "domain": domain,
+            "database": "fr",
+            "display_limit": "15",
+            "display_sort": "np_desc",
+        })
+        for row in comp_rows:
+            data["organic_competitors"].append({
+                "domain": row.get("Dn", ""),
+                "common_keywords": self._safe_int(row.get("Np", "0")),
+                "competition_level": self._safe_float(row.get("Cr", "0")),
+                "organic_keywords": self._safe_int(row.get("Or", "0")),
+                "organic_traffic": self._safe_int(row.get("Ot", "0")),
+                "organic_cost": self._safe_float(row.get("Os", "0")),
+            })
+
+        # 4. Backlinks Overview
+        bl_rows = self._semrush_get("backlinks_overview", {
+            "export_columns": "total,domains_num,urls_num,ips_num,follows_num,nofollows_num,texts_num,images_num,forms_num,frames_num",
+            "target": domain,
+            "target_type": "root_domain",
+        })
+        if bl_rows:
+            row = bl_rows[0]
+            data["backlinks_overview"] = {
+                "total_backlinks": self._safe_int(row.get("total", "0")),
+                "referring_domains": self._safe_int(row.get("domains_num", "0")),
+                "referring_urls": self._safe_int(row.get("urls_num", "0")),
+                "referring_ips": self._safe_int(row.get("ips_num", "0")),
+                "follow": self._safe_int(row.get("follows_num", "0")),
+                "nofollow": self._safe_int(row.get("nofollows_num", "0")),
+                "text_links": self._safe_int(row.get("texts_num", "0")),
+                "image_links": self._safe_int(row.get("images_num", "0")),
+            }
+
+        return data
+
+    @staticmethod
+    def _safe_int(val: str) -> int:
+        try:
+            return int(float(val))
+        except (ValueError, TypeError):
+            return 0
+
+    @staticmethod
+    def _safe_float(val: str) -> float:
+        try:
+            return round(float(val), 2)
+        except (ValueError, TypeError):
+            return 0.0
 
     def _get_llm_mentions(self, domain: str) -> dict:
         """Recupere les mentions LLM via DataForSEO AI Optimization API.
