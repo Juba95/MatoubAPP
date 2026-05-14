@@ -6,6 +6,7 @@
 <title>MatoubeAPP</title>
 <meta name="robots" content="noindex, nofollow">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.2/html2pdf.bundle.min.js" defer></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--bg:#f5f5f7;--card:#ffffff;--card2:#f0f0f5;--border:#e2e2ea;--accent:#6c5ce7;--accent2:#a29bfe;--text:#1a1a2e;--muted:#8888a0;--danger:#ff6b6b;--success:#51cf66;--warn:#fcc419;--orange:#ff922b;--blue:#339af0;--mono:'JetBrains Mono',monospace;--body:'Inter',system-ui,sans-serif;--radius:12px}
@@ -1125,7 +1126,66 @@ h+=`<div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var
 h+=`</div>`;
 }
 
+// Bouton télécharger PDF
+h+=`<div style="text-align:center;margin-top:20px">
+<button class="btn" onclick="downloadGEOReport('${domain}')" style="padding:10px 28px;font-size:13px">
+&#x1F4E5; Telecharger le rapport PDF
+</button>
+</div>`;
+
 document.getElementById('geo-result').innerHTML=h;
+}
+
+function downloadGEOReport(domain){
+const el=document.getElementById('geo-result');
+if(!el||!el.innerHTML.trim())return;
+const btn=event.target.closest('button');
+btn.disabled=true;btn.textContent='Generation du PDF...';
+
+// Clone pour le PDF (supprimer les boutons interactifs et ajuster le style)
+const clone=el.cloneNode(true);
+// Supprimer le bouton PDF lui-même du clone
+const pdfBtns=clone.querySelectorAll('button');
+pdfBtns.forEach(b=>b.remove());
+// Ouvrir tous les expandables (scores par plateforme)
+clone.querySelectorAll('[style*="display: none"], [style*="display:none"]').forEach(e=>{e.style.display='block';});
+
+// Wrapper avec style pour le PDF
+const wrapper=document.createElement('div');
+wrapper.style.cssText='padding:20px;background:#fff;color:#1a1a2e;font-family:Inter,sans-serif;max-width:800px';
+// Header
+const header=document.createElement('div');
+header.style.cssText='text-align:center;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #7180ff';
+header.innerHTML=`<div style="font-size:22px;font-weight:800;color:#7180ff">MatoubeAPP</div>
+<div style="font-size:14px;color:#666;margin-top:4px">Rapport GEO / IA — ${domain}</div>
+<div style="font-size:11px;color:#999;margin-top:4px">${new Date().toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}</div>`;
+wrapper.appendChild(header);
+wrapper.appendChild(clone);
+
+// Footer
+const footer=document.createElement('div');
+footer.style.cssText='text-align:center;margin-top:24px;padding-top:12px;border-top:1px solid #e0e0e0;font-size:10px;color:#999';
+footer.textContent='Rapport genere par MatoubeAPP — SEO Automation';
+wrapper.appendChild(footer);
+
+document.body.appendChild(wrapper);
+
+const opt={
+margin:[10,8],
+filename:`rapport-geo-${domain}-${new Date().toISOString().slice(0,10)}.pdf`,
+image:{type:'jpeg',quality:0.95},
+html2canvas:{scale:2,useCORS:true,backgroundColor:'#ffffff'},
+jsPDF:{unit:'mm',format:'a4',orientation:'portrait'},
+pagebreak:{mode:['avoid-all','css','legacy']}
+};
+
+html2pdf().set(opt).from(wrapper).save().then(()=>{
+document.body.removeChild(wrapper);
+btn.disabled=false;btn.innerHTML='&#x1F4E5; Telecharger le rapport PDF';
+}).catch(()=>{
+document.body.removeChild(wrapper);
+btn.disabled=false;btn.innerHTML='&#x1F4E5; Telecharger le rapport PDF';
+});
 }
 
 // GENERATOR
