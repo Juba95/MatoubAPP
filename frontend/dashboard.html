@@ -1079,65 +1079,231 @@ h+=`<div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var
 h+=`</div>`;
 }
 
-// Bouton télécharger PDF
+// Bouton télécharger PDF — stocker les données
 h+=`<div style="text-align:center;margin-top:20px">
-<button class="btn" onclick="downloadGEOReport('${domain}')" style="padding:10px 28px;font-size:13px">
-&#x1F4E5; Telecharger le rapport PDF
+<button class="btn" id="geo-pdf-btn" onclick="downloadGEOReport()" style="padding:10px 28px;font-size:13px">
+Telecharger le rapport PDF
 </button>
 </div>`;
 
+window._geoData=d;
 document.getElementById('geo-result').innerHTML=h;
 }
 
-function downloadGEOReport(domain){
-const el=document.getElementById('geo-result');
-if(!el||!el.innerHTML.trim())return;
-const btn=event.target.closest('button');
+function downloadGEOReport(){
+const d=window._geoData;if(!d)return;
+const btn=document.getElementById('geo-pdf-btn');
 btn.disabled=true;btn.textContent='Generation du PDF...';
 
-// Clone pour le PDF (supprimer les boutons interactifs et ajuster le style)
-const clone=el.cloneNode(true);
-// Supprimer le bouton PDF lui-même du clone
-const pdfBtns=clone.querySelectorAll('button');
-pdfBtns.forEach(b=>b.remove());
-// Ouvrir tous les expandables (scores par plateforme)
-clone.querySelectorAll('[style*="display: none"], [style*="display:none"]').forEach(e=>{e.style.display='block';});
+const domain=d.domain||'';
+const sum=d.summary||{};
+const pr=d.platform_readiness||{};
+const sem=d.semrush||{};
+const semOv=sem.domain_overview||{};
+const semKw=sem.organic_keywords||[];
+const semComp=sem.organic_competitors||[];
+const semAio=sem.ai_overview||{};
+const cr=d.crawlers||{};
+const t=d.technical||{};
+const c=d.content||{};
+const sc=d.schema||{};
+const recs=d.recommendations||[];
+const topPages=d.top_pages||[];
+const date=new Date().toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'});
 
-// Wrapper avec style pour le PDF
-const wrapper=document.createElement('div');
-wrapper.style.cssText='padding:20px;background:#fff;color:#1a1a2e;font-family:Inter,sans-serif;max-width:800px';
-// Header
-const header=document.createElement('div');
-header.style.cssText='text-align:center;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #7180ff';
-header.innerHTML=`<div style="font-size:22px;font-weight:800;color:#7180ff">MatoubeAPP</div>
-<div style="font-size:14px;color:#666;margin-top:4px">Rapport GEO / IA — ${domain}</div>
-<div style="font-size:11px;color:#999;margin-top:4px">${new Date().toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}</div>`;
-wrapper.appendChild(header);
-wrapper.appendChild(clone);
+const sc0=(v)=>v>=70?'#51cf66':v>=40?'#ffc107':'#ff6b6b';
+const chk=(ok)=>ok?'<span style="color:#51cf66">&#x2713;</span>':'<span style="color:#ff6b6b">&#x2717;</span>';
+const fmtN=(n)=>n!=null?Number(n).toLocaleString('fr-FR'):'-';
+
+let p='';
+
+// ── PAGE 1 : Header + KPIs ──
+p+=`<div style="text-align:center;padding-bottom:20px;border-bottom:3px solid #7180ff;margin-bottom:24px">
+<div style="font-size:28px;font-weight:800;color:#7180ff;letter-spacing:1px">MatoubeAPP</div>
+<div style="font-size:11px;color:#999;margin-top:2px">SEO Automation Dashboard</div>
+<div style="font-size:18px;font-weight:700;color:#1a1a2e;margin-top:16px">Rapport Analyse GEO / IA</div>
+<div style="font-size:14px;color:#666;margin-top:4px">${domain}</div>
+<div style="font-size:11px;color:#999;margin-top:4px">${date}</div>
+</div>`;
+
+// AI Visibility Score
+const vis=sum.ai_visibility_score||0;
+p+=`<div style="display:flex;gap:16px;margin-bottom:20px">
+<div style="flex:1;text-align:center;border:2px solid ${sc0(vis)};border-radius:12px;padding:16px">
+<div style="font-size:11px;color:#999;text-transform:uppercase;letter-spacing:1px">AI Visibility Score</div>
+<div style="font-size:42px;font-weight:800;color:${sc0(vis)}">${vis}<span style="font-size:16px;color:#999">/100</span></div>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:8px;justify-content:center">
+<div style="display:flex;justify-content:space-between;padding:8px 14px;background:#f8f9fa;border-radius:8px"><span style="color:#666">Mentions IA</span><b>${fmtN(sum.total_mentions)}</b></div>
+<div style="display:flex;justify-content:space-between;padding:8px 14px;background:#f8f9fa;border-radius:8px"><span style="color:#666">Citations</span><b>${fmtN(sum.total_citations)}</b></div>
+<div style="display:flex;justify-content:space-between;padding:8px 14px;background:#f8f9fa;border-radius:8px"><span style="color:#666">Pages mentionnees</span><b>${fmtN(sum.total_pages_mentioned)}</b></div>
+</div>
+</div>`;
+
+// Semrush Overview
+if(semOv.organic_keywords||semOv.authority_score){
+const as=semOv.authority_score||0;
+p+=`<div style="margin-bottom:20px;padding:16px;border:1px solid #e0e0e0;border-radius:12px;border-left:4px solid #7180ff">
+<div style="font-size:13px;font-weight:700;color:#7180ff;margin-bottom:12px">SEMRUSH — VUE D'ENSEMBLE</div>
+<div style="display:flex;gap:20px;text-align:center">
+<div style="flex:1"><div style="font-size:28px;font-weight:800;color:${sc0(as)}">${as}</div><div style="font-size:10px;color:#999">Authority Score</div></div>
+<div style="flex:1"><div style="font-size:22px;font-weight:700">${fmtN(semOv.organic_keywords)}</div><div style="font-size:10px;color:#999">Keywords</div></div>
+<div style="flex:1"><div style="font-size:22px;font-weight:700">${fmtN(semOv.organic_traffic)}</div><div style="font-size:10px;color:#999">Trafic/mois</div></div>
+${semOv.organic_cost?'<div style="flex:1"><div style="font-size:22px;font-weight:700">$'+fmtN(semOv.organic_cost)+'</div><div style="font-size:10px;color:#999">Cout equiv.</div></div>':''}
+</div></div>`;
+}
+
+// Score par plateforme
+const platLabels={google_aio:'Google AIO',chatgpt:'ChatGPT',perplexity:'Perplexity',gemini:'Gemini',bing_copilot:'Bing Copilot'};
+p+=`<div style="margin-bottom:20px;padding:16px;border:1px solid #e0e0e0;border-radius:12px">
+<div style="font-size:13px;font-weight:700;color:#7180ff;margin-bottom:12px">SCORE PAR PLATEFORME</div>`;
+for(const[key,label] of Object.entries(platLabels)){
+const pData=pr[key]||{};
+const v=typeof pData==='object'?pData.score||0:pData;
+const details=typeof pData==='object'?(pData.details||[]):[];
+const passed=details.filter(x=>x.passed).length;
+p+=`<div style="margin-bottom:10px">
+<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+<span style="font-weight:600">${label}</span>
+<span style="font-weight:700;color:${sc0(v)}">${v}/100 <span style="color:#999;font-weight:400">(${passed}/${details.length})</span></span>
+</div>
+<div style="height:6px;background:#eee;border-radius:3px;overflow:hidden">
+<div style="height:100%;width:${v}%;background:${sc0(v)};border-radius:3px"></div>
+</div>`;
+if(details.length){
+p+=`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">`;
+details.forEach(x=>{p+=`<span style="font-size:9px;padding:1px 6px;border-radius:4px;background:${x.passed?'#e6f9ed':'#fee'};color:${x.passed?'#2b8a3e':'#c92a2a'}">${x.passed?'+':'-'}${x.points} ${x.label}</span>`;});
+p+=`</div>`;
+}
+p+=`</div>`;
+}
+p+=`</div>`;
+
+// Top Keywords Semrush
+if(semKw.length){
+p+=`<div style="page-break-before:always"></div>`;
+p+=`<div style="margin-bottom:20px;padding:16px;border:1px solid #e0e0e0;border-radius:12px">
+<div style="font-size:13px;font-weight:700;color:#7180ff;margin-bottom:12px">TOP KEYWORDS ORGANIQUES (${semKw.length})</div>
+<table style="width:100%;border-collapse:collapse;font-size:11px">
+<tr style="border-bottom:2px solid #e0e0e0;text-align:left">
+<th style="padding:6px 4px;color:#999;font-size:9px;text-transform:uppercase">Mot-cle</th>
+<th style="padding:6px 4px;color:#999;font-size:9px;text-align:center">Pos.</th>
+<th style="padding:6px 4px;color:#999;font-size:9px;text-align:right">Volume</th>
+<th style="padding:6px 4px;color:#999;font-size:9px;text-align:right">CPC</th>
+<th style="padding:6px 4px;color:#999;font-size:9px;text-align:right">Trafic%</th>
+<th style="padding:6px 4px;color:#999;font-size:9px">URL</th>
+</tr>`;
+semKw.forEach(k=>{
+const pos=k.position||0;
+p+=`<tr style="border-bottom:1px solid #f0f0f0">
+<td style="padding:5px 4px;font-weight:600">${k.keyword||''}</td>
+<td style="padding:5px 4px;text-align:center;font-weight:700;color:${pos<=3?'#51cf66':pos<=10?'#7180ff':pos<=20?'#ffc107':'#999'}">${pos}</td>
+<td style="padding:5px 4px;text-align:right">${fmtN(k.volume)}</td>
+<td style="padding:5px 4px;text-align:right;color:#999">${k.cpc?'$'+k.cpc.toFixed(2):'-'}</td>
+<td style="padding:5px 4px;text-align:right">${k.traffic_pct?k.traffic_pct.toFixed(2)+'%':'-'}</td>
+<td style="padding:5px 4px;font-size:9px;color:#7180ff;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${k.url?'/'+k.url.split('/').slice(3).join('/'):''}</td>
+</tr>`;
+});
+p+=`</table></div>`;
+}
+
+// Concurrents Semrush
+if(semComp.length){
+p+=`<div style="margin-bottom:20px;padding:16px;border:1px solid #e0e0e0;border-radius:12px">
+<div style="font-size:13px;font-weight:700;color:#7180ff;margin-bottom:12px">CONCURRENTS ORGANIQUES</div>
+<table style="width:100%;border-collapse:collapse;font-size:11px">
+<tr style="border-bottom:2px solid #e0e0e0"><th style="padding:6px;color:#999;font-size:9px;text-transform:uppercase;text-align:left">Domaine</th><th style="padding:6px;color:#999;font-size:9px;text-align:right">KW communs</th><th style="padding:6px;color:#999;font-size:9px;text-align:right">Trafic</th></tr>`;
+semComp.forEach(x=>{
+p+=`<tr style="border-bottom:1px solid #f0f0f0"><td style="padding:5px 6px;font-weight:500">${x.domain}</td><td style="padding:5px 6px;text-align:right;font-weight:600;color:#7180ff">${fmtN(x.common_keywords)}</td><td style="padding:5px 6px;text-align:right">${fmtN(x.organic_traffic)}</td></tr>`;
+});
+p+=`</table></div>`;
+}
+
+// AI Overview (Semrush)
+if(semAio.total_keywords_analyzed){
+p+=`<div style="margin-bottom:20px;padding:16px;border:1px solid #e0e0e0;border-radius:12px">
+<div style="font-size:13px;font-weight:700;color:#7180ff;margin-bottom:12px">GOOGLE AI OVERVIEW</div>
+<div style="display:flex;gap:16px;text-align:center;margin-bottom:12px">
+<div style="flex:1;padding:10px;background:#f8f9fa;border-radius:8px"><div style="font-size:20px;font-weight:700;color:#7180ff">${fmtN(semAio.keywords_with_ai_overview)}</div><div style="font-size:9px;color:#999">KW avec AI Overview</div></div>
+<div style="flex:1;padding:10px;background:#f8f9fa;border-radius:8px"><div style="font-size:20px;font-weight:700;color:#51cf66">${fmtN(semAio.keywords_in_ai_overview)}</div><div style="font-size:9px;color:#999">Votre site dans AIO</div></div>
+<div style="flex:1;padding:10px;background:#f8f9fa;border-radius:8px"><div style="font-size:20px;font-weight:700">${semAio.pct_ai_overview||0}%</div><div style="font-size:9px;color:#999">% KW avec AIO</div></div>
+</div></div>`;
+}
+
+// Crawlers IA
+p+=`<div style="margin-bottom:20px;padding:16px;border:1px solid #e0e0e0;border-radius:12px">
+<div style="font-size:13px;font-weight:700;color:#7180ff;margin-bottom:12px">CRAWLERS IA</div>
+<div style="display:flex;flex-wrap:wrap;gap:6px">`;
+for(const[name,info] of Object.entries(cr)){
+const ok=info.status==='allowed';
+p+=`<span style="padding:4px 10px;border-radius:6px;font-size:10px;background:${ok?'#e6f9ed':'#fee'};color:${ok?'#2b8a3e':'#c92a2a'}">${ok?'&#x2713;':'&#x2717;'} ${info.label||name}</span>`;
+}
+p+=`</div></div>`;
+
+// Analyse technique
+p+=`<div style="margin-bottom:20px;padding:16px;border:1px solid #e0e0e0;border-radius:12px">
+<div style="font-size:13px;font-weight:700;color:#7180ff;margin-bottom:12px">ANALYSE TECHNIQUE</div>
+<div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px">`;
+[['HTTPS',t.https],['SSR',t.is_ssr],['Canonical',t.canonical],['llms.txt',t.llms_txt&&t.llms_txt.exists]].forEach(([l,ok])=>{
+p+=`<span style="padding:5px 12px;background:#f8f9fa;border-radius:6px">${chk(ok)} ${l}</span>`;
+});
+p+=`</div>
+<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;font-size:11px">`;
+[['Title',`${t.title_length||0} chars`],['Meta desc',`${t.meta_desc_length||0} chars`],['Reponse',`${t.response_time_ms||0}ms`],['Framework',t.framework||'?']].forEach(([l,v])=>{
+p+=`<span style="padding:5px 12px;background:#f8f9fa;border-radius:6px"><span style="color:#999">${l}:</span> <b>${v}</b></span>`;
+});
+p+=`</div></div>`;
+
+// Schema.org
+p+=`<div style="margin-bottom:20px;padding:16px;border:1px solid #e0e0e0;border-radius:12px">
+<div style="font-size:13px;font-weight:700;color:#7180ff;margin-bottom:12px">SCHEMA.ORG <span style="font-weight:400;color:#999">— Score: ${sc.schema_score||0}/100</span></div>
+<div style="display:flex;flex-wrap:wrap;gap:6px;font-size:11px">`;
+[['Organization',sc.has_organization],['sameAs',sc.has_same_as],['Article',sc.has_article],['BreadcrumbList',sc.has_breadcrumb],['Person',sc.has_person],['speakable',sc.has_speakable]].forEach(([l,ok])=>{
+p+=`<span style="padding:4px 10px;border-radius:6px;background:${ok?'#e6f9ed':'#fee'};color:${ok?'#2b8a3e':'#c92a2a'}">${chk(ok)} ${l}</span>`;
+});
+p+=`</div></div>`;
+
+// Recommandations
+if(recs.length){
+const prioColors={critical:'#ff6b6b',high:'#ff922b',medium:'#ffc107',low:'#999'};
+const prioLabels={critical:'CRITIQUE',high:'IMPORTANT',medium:'MOYEN',low:'MINEUR'};
+const sorted=[...recs].sort((a,b)=>({critical:0,high:1,medium:2,low:3}[a.priority]||3)-({critical:0,high:1,medium:2,low:3}[b.priority]||3));
+p+=`<div style="padding:16px;border:1px solid #e0e0e0;border-radius:12px">
+<div style="font-size:13px;font-weight:700;color:#7180ff;margin-bottom:12px">RECOMMANDATIONS</div>`;
+sorted.forEach(r=>{
+const pc=prioColors[r.priority]||'#999';
+p+=`<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0;font-size:11px;align-items:flex-start">
+<span style="padding:2px 8px;border-radius:4px;background:${pc}20;color:${pc};font-size:9px;font-weight:700;flex-shrink:0">${prioLabels[r.priority]||r.priority}</span>
+<div><b>${r.category||''}</b> — ${r.text}</div>
+</div>`;
+});
+p+=`</div>`;
+}
 
 // Footer
-const footer=document.createElement('div');
-footer.style.cssText='text-align:center;margin-top:24px;padding-top:12px;border-top:1px solid #e0e0e0;font-size:10px;color:#999';
-footer.textContent='Rapport genere par MatoubeAPP — SEO Automation';
-wrapper.appendChild(footer);
+p+=`<div style="text-align:center;margin-top:30px;padding-top:12px;border-top:2px solid #7180ff;font-size:10px;color:#999">
+Rapport genere par <b style="color:#7180ff">MatoubeAPP</b> — SEO Automation — ${date}
+</div>`;
 
+// Build and render PDF
+const wrapper=document.createElement('div');
+wrapper.style.cssText='position:absolute;left:-9999px;top:0;width:780px;padding:24px 28px;background:#fff;color:#1a1a2e;font-family:Inter,Helvetica,Arial,sans-serif;line-height:1.5';
+wrapper.innerHTML=p;
 document.body.appendChild(wrapper);
 
-const opt={
-margin:[10,8],
+html2pdf().set({
+margin:[12,10,12,10],
 filename:`rapport-geo-${domain}-${new Date().toISOString().slice(0,10)}.pdf`,
-image:{type:'jpeg',quality:0.95},
-html2canvas:{scale:2,useCORS:true,backgroundColor:'#ffffff'},
+image:{type:'jpeg',quality:0.98},
+html2canvas:{scale:2,useCORS:true,backgroundColor:'#ffffff',width:780},
 jsPDF:{unit:'mm',format:'a4',orientation:'portrait'},
-pagebreak:{mode:['avoid-all','css','legacy']}
-};
-
-html2pdf().set(opt).from(wrapper).save().then(()=>{
+pagebreak:{mode:['css'],avoid:['tr','span']}
+}).from(wrapper).save().then(()=>{
 document.body.removeChild(wrapper);
-btn.disabled=false;btn.innerHTML='&#x1F4E5; Telecharger le rapport PDF';
+btn.disabled=false;btn.textContent='Telecharger le rapport PDF';
 }).catch(()=>{
 document.body.removeChild(wrapper);
-btn.disabled=false;btn.innerHTML='&#x1F4E5; Telecharger le rapport PDF';
+btn.disabled=false;btn.textContent='Telecharger le rapport PDF';
 });
 }
 
