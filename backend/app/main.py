@@ -48,12 +48,20 @@ def on_startup():
 
 
 import os
+
+# Chercher dashboard.html : d'abord backend/static/ (Docker), sinon frontend/
 _static_dir = os.path.join(os.path.dirname(__file__), "..", "static")
+_frontend_dir = os.path.join(os.path.dirname(__file__), "..", "..", "frontend")
+_dashboard_path = os.path.join(_static_dir, "dashboard.html")
+if not os.path.exists(_dashboard_path):
+    _dashboard_path = os.path.join(_frontend_dir, "dashboard.html")
 
 
 @app.get("/")
 def root():
-    return FileResponse(os.path.join(_static_dir, "dashboard.html"))
+    if not os.path.exists(_dashboard_path):
+        return {"error": "dashboard.html introuvable", "searched": [_static_dir, _frontend_dir]}
+    return FileResponse(_dashboard_path)
 
 
 @app.get("/health")
