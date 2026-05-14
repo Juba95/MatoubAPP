@@ -357,6 +357,7 @@ async function retryAction(id){try{await apiFetch(`/actions/${id}/retry`,{method
 
 function showActionLogs(id){
 const container=document.getElementById('action-logs-'+id);
+if(!container)return;
 if(container.innerHTML){container.innerHTML='';return;}
 container.innerHTML='<div class="log-box" style="margin-top:8px">Chargement...</div>';
 const poll=setInterval(async()=>{
@@ -1068,7 +1069,7 @@ h+=`<div ${stepStyle}>
 <div><label>Auteur WP</label><input id="geo-author" value="admin"></div>
 <div><label>Cat\u00e9gorie</label><input id="geo-category" placeholder="services"></div>
 <div><label>Image \u00e0 la une (URL)</label><input id="geo-thumbnail" placeholder="https://..."></div>
-<div><label>Statut</label><select id="geo-status"><option value="draft">Brouillon (draft)</option><option value="publish">Publi\u00e9 (publish)</option></select></div>
+<div><label>Statut</label><select id="geo-post-status"><option value="draft">Brouillon (draft)</option><option value="publish">Publié (publish)</option></select></div>
 </div>
 <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;margin-top:4px">
 <label ${chkLabel}><input type="checkbox" id="geo-divi"> Format Divi Builder</label>
@@ -1169,18 +1170,25 @@ else{selDepts.push(d);el.classList.add('on');}
 }
 
 let _geoSiteId=null;
+let _geoDomainCached='';
 async function ensureGeoSite(){
 const domain=document.getElementById('geo-domain').value.trim();
 if(!domain)return null;
+// Reset si le domaine a changé
+if(domain!==_geoDomainCached){_geoSiteId=null;_geoDomainCached=domain;}
 if(_geoSiteId)return _geoSiteId;
+// Chercher d'abord dans les sites existants
+try{
+const sites=await apiFetch('/sites/');
+const clean=domain.replace('www.','').replace('https://','').replace('http://','').replace(/\/$/,'');
+const found=sites.find(s=>{const d=s.domain.replace('www.','').replace('https://','').replace('http://','').replace(/\/$/,'');return d===clean;});
+if(found){_geoSiteId=found.id;return _geoSiteId;}
+}catch(e){}
+// Pas trouvé → créer
 try{
 const res=await apiFetch('/sites/',{method:'POST',body:JSON.stringify({name:domain,domain:domain})});
 _geoSiteId=res.id;
-}catch(e){
-const sites=await apiFetch('/sites/');
-const found=sites.find(s=>s.domain.includes(domain.replace('www.','')));
-if(found)_geoSiteId=found.id;
-}
+}catch(e){}
 return _geoSiteId;
 }
 
@@ -1197,23 +1205,21 @@ site_name:document.getElementById('geo-sitename').value||domain,
 site_domain:domain,
 post_author:document.getElementById('geo-author').value||'admin',
 post_category:document.getElementById('geo-category').value||'',
-post_status:document.getElementById('geo-status').value||'draft',
+post_status:document.getElementById('geo-post-status').value||'draft',
 post_thumbnail:document.getElementById('geo-thumbnail').value||'',
 min_population:Number(document.getElementById('geo-pop').value),
 use_divi:document.getElementById('geo-divi').checked,
-generate_content:document.getElementById('geo-ai-content').checked,
-analyse_concurrentielle:document.getElementById('geo-concurrence').checked,
-nombre_variantes:Number(document.getElementById('geo-variantes').value)||1,
+nb_variants:Number(document.getElementById('geo-variantes').value)||1,
 source_text:document.getElementById('geo-source-text').value||'',
+competitor_urls:[
+document.getElementById('geo-brief-c1').value||'',
+document.getElementById('geo-brief-c2').value||'',
+document.getElementById('geo-brief-c3').value||''
+].filter(Boolean),
 brief:{
 activite:document.getElementById('geo-brief-activite').value||'',
 services:document.getElementById('geo-brief-services').value||'',
 mots_clients:document.getElementById('geo-brief-mots').value||'',
-concurrents:[
-document.getElementById('geo-brief-c1').value||'',
-document.getElementById('geo-brief-c2').value||'',
-document.getElementById('geo-brief-c3').value||''
-].filter(Boolean)
 },
 colors:{
 primary:document.getElementById('geo-color-primary').value,

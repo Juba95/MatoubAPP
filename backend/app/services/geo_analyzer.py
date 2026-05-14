@@ -626,24 +626,24 @@ class GEOAnalyzer:
 
         for s in schemas:
             t = s.get("@type", "")
-            if isinstance(t, list):
-                types.extend(t)
-            else:
-                types.append(t)
-            if t in ("Organization", "LocalBusiness"):
-                has_org = True
-                if s.get("sameAs"):
-                    has_same_as = True
-            if t in ("Article", "NewsArticle", "BlogPosting"):
-                has_article = True
-                if s.get("speakable"):
-                    has_speakable = True
-            if t == "FAQPage":
-                has_faq = True
-            if t == "BreadcrumbList":
-                has_breadcrumb = True
-            if t == "Person":
-                has_person = True
+            # Normaliser en liste pour gérer @type: "Org" ET @type: ["Org", "Person"]
+            type_list = t if isinstance(t, list) else [t]
+            types.extend(type_list)
+            for single_type in type_list:
+                if single_type in ("Organization", "LocalBusiness"):
+                    has_org = True
+                    if s.get("sameAs"):
+                        has_same_as = True
+                if single_type in ("Article", "NewsArticle", "BlogPosting"):
+                    has_article = True
+                    if s.get("speakable"):
+                        has_speakable = True
+                if single_type == "FAQPage":
+                    has_faq = True
+                if single_type == "BreadcrumbList":
+                    has_breadcrumb = True
+                if single_type == "Person":
+                    has_person = True
 
         score = 0
         if schemas:
