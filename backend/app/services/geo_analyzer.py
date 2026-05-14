@@ -131,7 +131,7 @@ class GEOAnalyzer:
             "title_length": len(title),
             "meta_description": meta_desc,
             "meta_desc_length": len(meta_desc),
-            "canonical": soup.find("link", rel="canonical")["href"] if soup.find("link", rel="canonical") else None,
+            "canonical": (soup.find("link", rel="canonical") or {}).get("href"),
             "language": soup.find("html").get("lang", "") if soup.find("html") else "",
             "security_headers": security,
             "is_ssr": is_ssr,

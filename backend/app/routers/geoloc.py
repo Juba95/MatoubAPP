@@ -115,8 +115,8 @@ def list_villes(
     limit: int = Query(100, le=500),
 ):
     """Liste des villes avec filtres"""
-    dept_list = departments.split(",") if departments else None
-    region_list = regions.split(",") if regions else None
+    dept_list = [d.strip() for d in departments.split(",") if d.strip()] if departments else None
+    region_list = [r.strip() for r in regions.split(",") if r.strip()] if regions else None
     villes = load_villes(dept_list, region_list, min_population)
     return {
         "total": len(villes),

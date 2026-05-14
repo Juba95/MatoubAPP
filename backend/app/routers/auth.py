@@ -55,6 +55,10 @@ GSC_SCOPES = "https://www.googleapis.com/auth/webmasters.readonly"
 GSC_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GSC_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
+# CSRF tokens pour OAuth (en mémoire, token → site_id)
+import secrets
+_oauth_states: dict[str, int] = {}
+
 
 @router.get("/gsc/connect/{site_id}")
 def gsc_connect(site_id: int, _: str = Depends(get_current_user)):
@@ -63,6 +67,9 @@ def gsc_connect(site_id: int, _: str = Depends(get_current_user)):
     if not s.gsc_client_id or not s.gsc_client_secret:
         raise HTTPException(status_code=400, detail="GSC_CLIENT_ID et GSC_CLIENT_SECRET non configurés dans .env")
 
+    state_token = secrets.token_urlsafe(32)
+    _oauth_states[state_token] = site_id
+
     params = {
         "client_id": s.gsc_client_id,
         "redirect_uri": s.gsc_redirect_uri,
@@ -70,7 +77,7 @@ def gsc_connect(site_id: int, _: str = Depends(get_current_user)):
         "scope": GSC_SCOPES,
         "access_type": "offline",
         "prompt": "consent",
-        "state": str(site_id),
+        "state": state_token,
     }
     return {"url": f"{GSC_AUTH_URL}?{urlencode(params)}"}
 
@@ -83,9 +90,9 @@ def gsc_callback(
 ):
     """Callback Google OAuth — échange le code contre un refresh_token et le stocke."""
     s = get_settings()
-    site_id = int(state) if state.isdigit() else None
+    site_id = _oauth_states.pop(state, None)
     if not site_id:
-        raise HTTPException(status_code=400, detail="state (site_id) invalide")
+        raise HTTPException(status_code=400, detail="Token OAuth invalide ou expiré — relance la connexion")
 
     site = db.query(Site).filter(Site.id == site_id).first()
     if not site:
