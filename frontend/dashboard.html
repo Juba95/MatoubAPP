@@ -670,6 +670,19 @@ h+=`<div class="metrics" style="grid-template-columns:repeat(4,1fr)">
 </div>
 </div>`;
 
+// Explication du scoring
+h+=`<div class="card mb-12" style="font-size:12px;color:var(--muted);line-height:1.8">
+<div class="accent-title">Comment est calculé le score ?</div>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+<div><b style="color:var(--text)">Citabilité (25%)</b><br>Blocs de contenu de 20-60 mots qui peuvent être directement cités par un LLM</div>
+<div><b style="color:var(--text)">Contenu (20%)</b><br>Longueur, structure H2/H3, listes, images avec alt, liens externes, paragraphes courts</div>
+<div><b style="color:var(--text)">Technique (15%)</b><br>HTTPS, SSR, meta tags, canonical, headers de sécurité, temps de réponse</div>
+<div><b style="color:var(--text)">Crawlers IA (15%)</b><br>Proportion de crawlers IA autorisés dans robots.txt (GPTBot, ClaudeBot, etc.)</div>
+<div><b style="color:var(--text)">Schema (10%)</b><br>Données structurées : Organization, sameAs, Article, BreadcrumbList, speakable</div>
+<div><b style="color:var(--text)">Plateformes (15%)</b><br>Préparation pour chaque moteur IA : Google AIO, ChatGPT, Perplexity, Gemini, Bing Copilot</div>
+</div>
+</div>`;
+
 // ── ROW 2 : Repartition par LLM + Score par plateforme ──
 h+=`<div class="grid2 mb-12">`;
 
@@ -730,9 +743,16 @@ h+=`<tr style="border-bottom:1px solid var(--border)">
 h+=`</tbody></table></div>`;
 }
 
-// ── ROW 4 : Questions IA ──
-if(topQ.length){
-h+=`<div class="card mb-12"><div class="accent-title">Questions IA</div>
+// ── ROW 4 : Questions IA (Mentions comme Semrush) ──
+h+=`<div class="card mb-12"><div class="accent-title">Mentions dans les réponses IA</div>`;
+if(!topQ.length){
+h+=`<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px">
+<div style="font-size:24px;margin-bottom:8px">&#x1F50D;</div>
+Aucune mention trouvée pour ce domaine dans les réponses IA.<br>
+<span style="font-size:11px">Configurez DATAFORSEO_LOGIN et DATAFORSEO_PASSWORD pour activer cette fonctionnalité,<br>ou le domaine n'est pas encore cité par les LLM.</span>
+</div></div>`;
+} else {
+h+=`<div style="font-size:11px;color:var(--muted);margin-bottom:12px">${fmt(sum.total_mentions||0)} mentions trouvées — voici les questions IA où votre domaine apparaît</div>
 <div style="overflow-x:auto">
 <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:700px">
 <thead><tr style="border-bottom:2px solid var(--border);text-align:left">
@@ -759,7 +779,7 @@ h+=`</tbody></table></div></div>`;
 }
 
 // ── ROW 5 : Domaines concurrents + Entites de marque ──
-if(competitors.length||brands.length){
+{
 h+=`<div class="grid2 mb-12">`;
 
 // Left — Domaines concurrents
