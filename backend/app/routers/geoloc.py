@@ -1,6 +1,8 @@
 import csv
 import os
 import io
+import logging
+import traceback
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse
@@ -11,6 +13,9 @@ from app.database import get_db
 from app.auth import get_current_user
 from app.models.action import Action, ActionType, ActionStatus
 from app.models.site import Site
+from app.services.geoloc_engine import GeolocEngine
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/geoloc", tags=["geoloc"], dependencies=[Depends(get_current_user)])
 
@@ -397,3 +402,271 @@ def download_file(file_key: str):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{data["filename"]}"'},
     )
+
+
+# ======================================================================
+# Advanced Geoloc Content Engine — new endpoints
+# ======================================================================
+
+
+class SourceAnalysisRequest(BaseModel):
+    source_text: str
+    brief: dict = {}
+
+
+class AnchorsRequest(BaseModel):
+    ctx: dict
+
+
+class BlocksRequest(BaseModel):
+    source_text: str
+    ctx: dict
+    anchors: list[str] = []
+
+
+class CompetitorRequest(BaseModel):
+    urls: list[str]
+    ctx: dict
+
+
+class VariantsRequest(BaseModel):
+    blocs: dict
+    ctx: dict
+    count: int = 3
+
+
+class FullPipelineRequest(BaseModel):
+    source_text: str
+    brief: dict = {}
+    site_name: str
+    site_domain: str
+    post_author: str = "admin"
+    post_category: str = ""
+    post_status: str = "draft"
+    post_thumbnail: str = ""
+    images: list[str] = []
+    departments: list[str] | None = None
+    regions: list[str] | None = None
+    min_population: int = 5000
+    use_divi: bool = False
+    nb_variants: int = 3
+    competitor_urls: list[str] = []
+    colors: dict = {}
+
+
+@router.post("/analyze-source")
+def analyze_source(req: SourceAnalysisRequest):
+    """Analyze source text and extract context for geoloc page generation."""
+    try:
+        engine = GeolocEngine()
+        ctx = engine.analyze_source(req.source_text, req.brief or None)
+        return {"ctx": ctx}
+    except Exception as exc:
+        logger.error("analyze-source error: %s", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Erreur d'analyse : {exc}")
+
+
+@router.post("/generate-anchors")
+def generate_anchors(req: AnchorsRequest):
+    """Generate internal linking anchor texts based on context."""
+    try:
+        engine = GeolocEngine()
+        anchors = engine.generate_anchors(req.ctx)
+        return {"anchors": anchors}
+    except Exception as exc:
+        logger.error("generate-anchors error: %s", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Erreur génération ancres : {exc}")
+
+
+@router.post("/optimize-blocks")
+def optimize_blocks(req: BlocksRequest):
+    """Split and optimize content into 5 SEO blocks."""
+    try:
+        engine = GeolocEngine()
+        blocs = engine.optimize_blocks(req.source_text, req.ctx, req.anchors)
+        return {"blocs": blocs}
+    except Exception as exc:
+        logger.error("optimize-blocks error: %s", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Erreur optimisation blocs : {exc}")
+
+
+@router.post("/analyze-competitors")
+def analyze_competitors(req: CompetitorRequest):
+    """Analyze competitor URLs and return missing themes, key arguments, enrichment suggestions."""
+    if not req.urls:
+        raise HTTPException(status_code=400, detail="Au moins une URL est requise")
+    try:
+        engine = GeolocEngine()
+        result = engine.analyze_competitors(req.urls, req.ctx)
+        return result
+    except Exception as exc:
+        logger.error("analyze-competitors error: %s", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Erreur analyse concurrents : {exc}")
+
+
+@router.post("/generate-variants")
+def generate_variants(req: VariantsRequest):
+    """Generate content variants to avoid duplicate content across cities."""
+    try:
+        engine = GeolocEngine()
+        variants = engine.generate_variants(req.blocs, req.ctx, req.count)
+        return {"variants": variants, "count": len(variants)}
+    except Exception as exc:
+        logger.error("generate-variants error: %s", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Erreur génération variantes : {exc}")
+
+
+@router.post("/build-file")
+def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
+    """Full pipeline: analyze, generate blocks/anchors/variants, assemble all city pages, build Excel."""
+    villes = load_villes(req.departments, req.regions, req.min_population)
+    if not villes:
+        raise HTTPException(status_code=400, detail="Aucune ville ne correspond aux filtres")
+
+    file_key = f"adv_{req.site_domain}_{len(villes)}_{datetime.now().strftime('%H%M%S')}"
+    _generated_files[file_key] = {
+        "status": "running",
+        "total": len(villes),
+        "done": 0,
+        "step": "init",
+    }
+
+    def run_pipeline():
+        import openpyxl
+
+        engine = GeolocEngine()
+        state = _generated_files[file_key]
+
+        try:
+            # --- Step 1: Analyze source text ---
+            state["step"] = "analyze"
+            ctx = engine.analyze_source(req.source_text, req.brief or None)
+
+            # --- Step 2: Generate anchors ---
+            state["step"] = "anchors"
+            anchors = engine.generate_anchors(ctx)
+
+            # --- Step 3: Optimize blocks ---
+            state["step"] = "blocks"
+            blocs = engine.optimize_blocks(req.source_text, ctx, anchors)
+
+            # --- Step 4: Analyze competitors (if URLs provided) ---
+            competitor_data = None
+            if req.competitor_urls:
+                state["step"] = "competitors"
+                competitor_data = engine.analyze_competitors(req.competitor_urls, ctx)
+                # Enrich context with competitor insights
+                ctx["competitor_insights"] = competitor_data
+
+            # --- Step 5: Generate variants ---
+            state["step"] = "variants"
+            variants = engine.generate_variants(blocs, ctx, req.nb_variants)
+            if not variants:
+                variants = [blocs]
+
+            # --- Step 6+7: Assemble pages & build Excel ---
+            state["step"] = "assemble"
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Import WP"
+
+            headers = [
+                "Ville actuelle", "SLUG", "post_title", "H1", "post_description",
+                "post_content", "post_thumbnail", "post_date", "post_author",
+                "post_category", "post_tag", "post_status", "Population", "Type",
+            ]
+            if req.use_divi:
+                headers.extend(["_et_pb_use_builder", "_et_pb_old_content"])
+            ws.append(headers)
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            keyword = ctx.get("keyword", req.source_text[:30])
+            slug_base = ctx.get("slug_base", keyword.replace(" ", "-").lower())
+            title_tpl = ctx.get("title_template", f"{keyword} {{ville}} | {req.site_name}")
+            h1_tpl = ctx.get("h1_template", f"{keyword} {{ville}}")
+            meta_tpl = ctx.get(
+                "meta_desc_template",
+                f"{keyword} à {{ville}} ({{departement}}). Intervention rapide. Devis gratuit.",
+            )
+
+            for i, v in enumerate(villes):
+                # Rotate variants
+                variant = variants[i % len(variants)]
+
+                # Assemble content
+                content = engine.assemble_page(
+                    variant=variant,
+                    city=v,
+                    anchors=anchors,
+                    all_cities=villes,
+                    ctx=ctx,
+                    site_domain=req.site_domain,
+                    use_divi=req.use_divi,
+                    images=req.images,
+                    colors=req.colors,
+                )
+
+                # Build metadata
+                replacements = {
+                    "{ville}": v["name"],
+                    "{departement}": v["department"],
+                    "{region}": v.get("region", ""),
+                    "{code_postal}": v.get("postal_code", ""),
+                }
+
+                def _replace(tpl: str) -> str:
+                    for ph, val in replacements.items():
+                        tpl = tpl.replace(ph, val)
+                    return tpl
+
+                title = _replace(title_tpl)
+                h1 = _replace(h1_tpl)
+                meta_desc = _replace(meta_tpl)
+                slug = f"{slug_base}-{v['slug']}"
+                tags = f"{keyword},{v['name'].lower()},{v['department']}"
+
+                row = [
+                    v["name"], slug, title, h1, meta_desc,
+                    content, req.post_thumbnail, today, req.post_author,
+                    req.post_category, tags, req.post_status,
+                    v["population"], "Ville",
+                ]
+                if req.use_divi:
+                    row.extend(["on", ""])
+
+                ws.append(row)
+                state["done"] = i + 1
+
+            # --- Step 8: Save to cache ---
+            state["step"] = "saving"
+            buffer = io.BytesIO()
+            wb.save(buffer)
+            buffer.seek(0)
+
+            _generated_files[file_key] = {
+                "status": "done",
+                "total": len(villes),
+                "done": len(villes),
+                "step": "done",
+                "data": buffer.getvalue(),
+                "filename": f"adv_import_{req.site_domain}_{len(villes)}_pages.xlsx",
+                "ctx": ctx,
+                "nb_variants": len(variants),
+            }
+
+        except Exception as exc:
+            logger.error("build-file pipeline error: %s", traceback.format_exc())
+            _generated_files[file_key] = {
+                "status": "error",
+                "total": state.get("total", 0),
+                "done": state.get("done", 0),
+                "step": state.get("step", "unknown"),
+                "error": str(exc),
+            }
+
+    background_tasks.add_task(run_pipeline)
+    return {
+        "message": f"Pipeline avancé lancé ({len(villes)} villes)",
+        "file_key": file_key,
+        "total": len(villes),
+    }

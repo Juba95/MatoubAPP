@@ -991,33 +991,162 @@ async function loadGeoloc(){
 let regions;
 try{regions=await apiFetch('/geoloc/regions');}catch(e){document.getElementById('tab-3').innerHTML=`<div class="card" style="color:var(--danger)">Erreur : ${e.message}</div>`;return;}
 geoRegions=regions;selRegs=[];selDepts=[];geoPreview=null;
-let h=`<div class="section-title mb-12">Pages géolocalisées</div><div class="card">
+
+const stepStyle=`style="border:1px solid var(--border);border-radius:var(--radius);margin-bottom:12px;overflow:hidden"`;
+const stepHead=`style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;cursor:pointer;user-select:none;background:var(--card);transition:background .15s"`;
+const stepBody=`style="padding:18px 22px;background:var(--card);border-top:1px solid var(--border)"`;
+const stepNum=`style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;font-weight:700;margin-right:10px;flex-shrink:0"`;
+const stepTitle=`style="font-size:13px;font-weight:600;letter-spacing:-.2px"`;
+const chevron=`style="font-size:16px;color:var(--muted);transition:transform .2s"`;
+const chkLabel=`style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text)"`;
+
+let h=`<div class="section-title mb-12">Pages g\u00e9olocalis\u00e9es</div>`;
+
+// --- STEP 1: Configuration ---
+h+=`<div ${stepStyle}>
+<div ${stepHead} onclick="geoToggleStep('geo-step1-body',this)">
+<div style="display:flex;align-items:center"><span ${stepNum}>1</span><span ${stepTitle}>Configuration</span></div>
+<span class="geo-chevron" ${chevron}>\u25BC</span>
+</div>
+<div id="geo-step1-body" ${stepBody}>
 <div class="grid2 mb-16">
 <div><label>Domaine du site</label><input id="geo-domain" placeholder="monsite.fr"></div>
-<div><label>Mot-clé (la ville sera ajoutée auto)</label><input id="geo-kw" placeholder="serrurier"></div></div>
+<div><label>Nom du site</label><input id="geo-sitename" placeholder="Mon Site Pro"></div>
+</div>
+<div class="mb-16">
+<label>Mot-cl\u00e9 template <span style="font-weight:400;text-transform:none;letter-spacing:0">(la ville sera ajout\u00e9e automatiquement)</span></label>
+<input id="geo-kw" placeholder="serrurier">
+</div>
+<div class="mb-16">
+<label>Texte source</label>
+<textarea id="geo-source-text" rows="5" placeholder="Collez ici le texte source pour la g\u00e9n\u00e9ration de contenu, ou laissez vide pour g\u00e9n\u00e9ration 100% IA..."></textarea>
+<div style="font-size:11px;color:var(--muted);margin-top:4px">Vous pouvez aussi pr\u00e9parer un fichier texte et le r\u00e9f\u00e9rencer c\u00f4t\u00e9 serveur.</div>
+</div>
+<div style="margin-top:8px">
+<div ${stepHead} onclick="geoToggleStep('geo-brief-body',this)" style="padding:10px 16px;background:var(--card2);border-radius:8px;margin-bottom:0">
+<div style="display:flex;align-items:center"><span style="font-size:12px;font-weight:600;color:var(--accent)">BRIEF D\u00c9TAILL\u00c9 (optionnel)</span></div>
+<span class="geo-chevron" ${chevron}>\u25BC</span>
+</div>
+<div id="geo-brief-body" class="hidden" style="background:var(--card2);padding:14px 16px;border-radius:0 0 8px 8px;border-top:1px solid var(--border)">
+<div class="grid2 mb-16">
+<div><label>Activit\u00e9</label><input id="geo-brief-activite" placeholder="Plomberie, serrurerie..."></div>
+<div><label>Services</label><input id="geo-brief-services" placeholder="D\u00e9pannage, installation..."></div>
+</div>
+<div class="mb-16"><label>Mots clients</label><input id="geo-brief-mots" placeholder="urgence, rapide, pas cher..."></div>
+<div class="grid2 mb-16" style="grid-template-columns:1fr 1fr 1fr">
+<div><label>Concurrent 1 URL</label><input id="geo-brief-c1" placeholder="https://..."></div>
+<div><label>Concurrent 2 URL</label><input id="geo-brief-c2" placeholder="https://..."></div>
+<div><label>Concurrent 3 URL</label><input id="geo-brief-c3" placeholder="https://..."></div>
+</div>
+</div>
+</div>
+</div></div>`;
+
+// --- STEP 2: Filtres géographiques ---
+h+=`<div ${stepStyle}>
+<div ${stepHead} onclick="geoToggleStep('geo-step2-body',this)">
+<div style="display:flex;align-items:center"><span ${stepNum}>2</span><span ${stepTitle}>Filtres g\u00e9ographiques</span></div>
+<span class="geo-chevron" ${chevron}>\u25BC</span>
+</div>
+<div id="geo-step2-body" ${stepBody}>
 <div class="mb-16"><label>Population min : <span id="pop-val">5 000</span> hab.</label>
 <input type="range" id="geo-pop" min="1000" max="50000" step="1000" value="5000" oninput="document.getElementById('pop-val').textContent=Number(this.value).toLocaleString('fr-FR')" style="accent-color:var(--accent)"></div>
-<div class="mb-16"><label>Régions</label><div class="wrap-btns" id="geo-regions">`;
+<div class="mb-16"><label>R\u00e9gions</label><div class="wrap-btns" id="geo-regions">`;
 regions.forEach(r=>{h+=`<button class="btn2 region-btn" style="font-size:10px;padding:4px 10px" onclick="toggleRegion('${r.replace(/'/g,"\\'")}',this)">${r}</button>`;});
-h+=`</div></div><div class="mb-16 hidden" id="geo-depts-wrap"><label>Départements</label><div class="wrap-btns-sm" id="geo-depts"></div></div>
-<div class="accent-title" style="margin-top:16px">Options d'export</div>
+h+=`</div></div>
+<div class="mb-16 hidden" id="geo-depts-wrap"><label>D\u00e9partements</label><div class="wrap-btns-sm" id="geo-depts"></div></div>
+</div></div>`;
+
+// --- STEP 3: Options ---
+h+=`<div ${stepStyle}>
+<div ${stepHead} onclick="geoToggleStep('geo-step3-body',this)">
+<div style="display:flex;align-items:center"><span ${stepNum}>3</span><span ${stepTitle}>Options d'export</span></div>
+<span class="geo-chevron" ${chevron}>\u25BC</span>
+</div>
+<div id="geo-step3-body" ${stepBody}>
 <div class="grid2 mb-16">
-<div><label>Nom du site</label><input id="geo-sitename" placeholder="Mon Site Pro"></div>
 <div><label>Auteur WP</label><input id="geo-author" value="admin"></div>
-<div><label>Catégorie</label><input id="geo-category" placeholder="services"></div>
-<div><label>Image à la une (URL)</label><input id="geo-thumbnail" placeholder="https://..."></div>
+<div><label>Cat\u00e9gorie</label><input id="geo-category" placeholder="services"></div>
+<div><label>Image \u00e0 la une (URL)</label><input id="geo-thumbnail" placeholder="https://..."></div>
+<div><label>Statut</label><select id="geo-status"><option value="draft">Brouillon (draft)</option><option value="publish">Publi\u00e9 (publish)</option></select></div>
 </div>
-<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-<label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="geo-divi"> Format Divi Builder</label>
-<label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="geo-ai-content"> Générer contenu IA (Claude — lent + coût API)</label>
+<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;margin-top:4px">
+<label ${chkLabel}><input type="checkbox" id="geo-divi"> Format Divi Builder</label>
+<label ${chkLabel}><input type="checkbox" id="geo-ai-content"> G\u00e9n\u00e9rer contenu IA (Claude)</label>
+<label ${chkLabel}><input type="checkbox" id="geo-concurrence"> Analyse concurrentielle</label>
 </div>
-<div class="flex-gap-10">
-<button class="btn" onclick="previewGeoloc()">Prévisualiser</button>
+<div class="grid2 mb-16">
+<div><label>Nombre de variantes</label><input type="number" id="geo-variantes" min="1" max="5" value="1"></div>
+<div></div>
+</div>
+<div style="margin-top:4px">
+<div ${stepHead} onclick="geoToggleStep('geo-colors-body',this)" style="padding:10px 16px;background:var(--card2);border-radius:8px;margin-bottom:0">
+<div style="display:flex;align-items:center"><span style="font-size:12px;font-weight:600;color:var(--accent)">COULEURS (optionnel)</span></div>
+<span class="geo-chevron" ${chevron}>\u25BC</span>
+</div>
+<div id="geo-colors-body" class="hidden" style="background:var(--card2);padding:14px 16px;border-radius:0 0 8px 8px;border-top:1px solid var(--border)">
+<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
+<div><label>Primaire</label><input type="color" id="geo-color-primary" value="#6c5ce7" style="height:36px;padding:2px;cursor:pointer"></div>
+<div><label>Secondaire</label><input type="color" id="geo-color-secondary" value="#a29bfe" style="height:36px;padding:2px;cursor:pointer"></div>
+<div><label>Light</label><input type="color" id="geo-color-light" value="#f5f5f7" style="height:36px;padding:2px;cursor:pointer"></div>
+<div><label>Neutre</label><input type="color" id="geo-color-neutre" value="#1a1a2e" style="height:36px;padding:2px;cursor:pointer"></div>
+<div><label>CTA</label><input type="color" id="geo-color-cta" value="#51cf66" style="height:36px;padding:2px;cursor:pointer"></div>
+</div>
+</div>
+</div>
+</div></div>`;
+
+// --- STEP 4: Actions ---
+h+=`<div ${stepStyle}>
+<div ${stepHead} onclick="geoToggleStep('geo-step4-body',this)">
+<div style="display:flex;align-items:center"><span ${stepNum}>4</span><span ${stepTitle}>Actions</span></div>
+<span class="geo-chevron" ${chevron}>\u25BC</span>
+</div>
+<div id="geo-step4-body" ${stepBody}>
+<div class="flex-gap-10" style="margin-bottom:14px">
+<button class="btn" onclick="previewGeoloc()">Pr\u00e9visualiser</button>
+<button class="btn" style="background:var(--success)" onclick="generateFile()">G\u00e9n\u00e9rer fichier Excel</button>
 <span id="geo-gen-btn"></span>
-<button class="btn" style="background:var(--success)" onclick="generateFile()">Générer fichier Excel</button>
 </div>
-</div><div id="geo-result"></div><div id="geo-file-status"></div><div id="geo-preview"></div>`;
+<div id="geo-progress-wrap" class="hidden" style="margin-bottom:12px">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+<span style="font-size:12px;font-weight:600;color:var(--text)" id="geo-progress-label">G\u00e9n\u00e9ration en cours...</span>
+<span style="font-size:12px;font-weight:600;color:var(--accent);font-family:var(--mono)" id="geo-progress-count">0/0</span>
+</div>
+<div style="width:100%;height:8px;background:var(--card2);border-radius:4px;overflow:hidden">
+<div id="geo-progress-bar" style="width:0%;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:4px;transition:width .3s ease"></div>
+</div>
+</div>
+<div id="geo-file-status"></div>
+<div id="geo-result"></div>
+</div></div>`;
+
+// --- STEP 5: Prévisualisation ---
+h+=`<div ${stepStyle}>
+<div ${stepHead} onclick="geoToggleStep('geo-step5-body',this)">
+<div style="display:flex;align-items:center"><span ${stepNum}>5</span><span ${stepTitle}>Pr\u00e9visualisation</span></div>
+<span class="geo-chevron" ${chevron}>\u25BC</span>
+</div>
+<div id="geo-step5-body" ${stepBody}>
+<div id="geo-preview" style="color:var(--muted);font-size:13px">Cliquez sur "Pr\u00e9visualiser" pour voir les villes et le co\u00fbt estim\u00e9.</div>
+</div></div>`;
+
 document.getElementById('tab-3').innerHTML=h;
+}
+
+function geoToggleStep(id,headerEl){
+const body=document.getElementById(id);
+if(!body)return;
+const chevEl=headerEl.querySelector('.geo-chevron');
+if(body.classList.contains('hidden')){
+body.classList.remove('hidden');
+body.style.display='';
+if(chevEl)chevEl.style.transform='rotate(0deg)';
+}else{
+body.classList.add('hidden');
+body.style.display='none';
+if(chevEl)chevEl.style.transform='rotate(-90deg)';
+}
 }
 
 async function toggleRegion(r,el){
@@ -1059,56 +1188,101 @@ function geoBody(siteId){
 return{site_id:siteId,keyword_template:document.getElementById('geo-kw').value,min_population:Number(document.getElementById('geo-pop').value),...(selRegs.length>0&&{regions:selRegs}),...(selDepts.length>0&&{departments:selDepts})};
 }
 
-async function previewGeoloc(){
-if(!document.getElementById('geo-domain').value||!document.getElementById('geo-kw').value)return;
-const siteId=await ensureGeoSite();
-if(!siteId){alert('Impossible de trouver/créer le site');return;}
-document.getElementById('geo-preview').innerHTML='';document.getElementById('geo-gen-btn').innerHTML='';
-try{geoPreview=await apiFetch('/geoloc/preview',{method:'POST',body:JSON.stringify(geoBody(siteId))});}
-catch(e){document.getElementById('geo-preview').innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;return;}
-document.getElementById('geo-gen-btn').innerHTML=`<button class="btn" style="background:var(--success)" onclick="generateGeoloc()">Générer ${geoPreview.total_pages} pages (~${geoPreview.estimated_cost_eur}\u20AC)</button>`;
-let h=`<div class="card"><div style="font-size:14px;font-weight:600;margin-bottom:8px">${geoPreview.total_pages} pages \u2014 ~${geoPreview.estimated_cost_eur}\u20AC</div><div style="max-height:260px;overflow-y:auto">`;
-geoPreview.pages.forEach(p=>{h+=`<div class="preview-row"><span>${p.keyword}</span><span class="preview-meta">${p.city} (${p.department}) \u2014 ${fmt(p.population)} hab.</span></div>`;});
-if(geoPreview.total_pages>20)h+=`<div style="padding:8px;font-size:11px;color:var(--muted);text-align:center">... et ${geoPreview.total_pages-20} autres</div>`;
-h+=`</div></div>`;
-document.getElementById('geo-preview').innerHTML=h;
-}
-
-async function generateFile(){
+function geoBuildFullBody(){
 const domain=document.getElementById('geo-domain').value.trim();
 const kw=document.getElementById('geo-kw').value.trim();
-if(!domain||!kw){alert('Domaine et mot-clé requis');return;}
 const body={
 keyword_template:kw,
 site_name:document.getElementById('geo-sitename').value||domain,
 site_domain:domain,
 post_author:document.getElementById('geo-author').value||'admin',
 post_category:document.getElementById('geo-category').value||'',
-post_status:'draft',
+post_status:document.getElementById('geo-status').value||'draft',
 post_thumbnail:document.getElementById('geo-thumbnail').value||'',
 min_population:Number(document.getElementById('geo-pop').value),
 use_divi:document.getElementById('geo-divi').checked,
 generate_content:document.getElementById('geo-ai-content').checked,
+analyse_concurrentielle:document.getElementById('geo-concurrence').checked,
+nombre_variantes:Number(document.getElementById('geo-variantes').value)||1,
+source_text:document.getElementById('geo-source-text').value||'',
+brief:{
+activite:document.getElementById('geo-brief-activite').value||'',
+services:document.getElementById('geo-brief-services').value||'',
+mots_clients:document.getElementById('geo-brief-mots').value||'',
+concurrents:[
+document.getElementById('geo-brief-c1').value||'',
+document.getElementById('geo-brief-c2').value||'',
+document.getElementById('geo-brief-c3').value||''
+].filter(Boolean)
+},
+colors:{
+primary:document.getElementById('geo-color-primary').value,
+secondary:document.getElementById('geo-color-secondary').value,
+light:document.getElementById('geo-color-light').value,
+neutre:document.getElementById('geo-color-neutre').value,
+cta:document.getElementById('geo-color-cta').value
+},
 ...(selRegs.length>0&&{regions:selRegs}),
 ...(selDepts.length>0&&{departments:selDepts}),
 };
+return body;
+}
+
+async function previewGeoloc(){
+if(!document.getElementById('geo-domain').value||!document.getElementById('geo-kw').value)return;
+const siteId=await ensureGeoSite();
+if(!siteId){alert('Impossible de trouver/cr\u00e9er le site');return;}
+document.getElementById('geo-preview').innerHTML='';document.getElementById('geo-gen-btn').innerHTML='';
+try{geoPreview=await apiFetch('/geoloc/preview',{method:'POST',body:JSON.stringify(geoBody(siteId))});}
+catch(e){document.getElementById('geo-preview').innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;return;}
+document.getElementById('geo-gen-btn').innerHTML=`<button class="btn" style="background:var(--success)" onclick="generateGeoloc()">G\u00e9n\u00e9rer ${geoPreview.total_pages} pages (~${geoPreview.estimated_cost_eur}\u20AC)</button>`;
+let ph=`<div style="font-size:14px;font-weight:600;margin-bottom:10px">${geoPreview.total_pages} pages \u2014 co\u00fbt estim\u00e9 ~${geoPreview.estimated_cost_eur}\u20AC</div><div style="max-height:300px;overflow-y:auto">`;
+geoPreview.pages.forEach(p=>{ph+=`<div class="preview-row"><span>${p.keyword}</span><span class="preview-meta">${p.city} (${p.department}) \u2014 ${fmt(p.population)} hab.</span></div>`;});
+if(geoPreview.total_pages>20)ph+=`<div style="padding:8px;font-size:11px;color:var(--muted);text-align:center">... et ${geoPreview.total_pages-20} autres</div>`;
+ph+=`</div>`;
+document.getElementById('geo-preview').innerHTML=ph;
+// Auto-expand step 5 if collapsed
+const step5=document.getElementById('geo-step5-body');
+if(step5&&step5.classList.contains('hidden')){step5.classList.remove('hidden');step5.style.display='';}
+}
+
+async function generateFile(){
+const domain=document.getElementById('geo-domain').value.trim();
+const kw=document.getElementById('geo-kw').value.trim();
+if(!domain||!kw){alert('Domaine et mot-cl\u00e9 requis');return;}
+const body=geoBuildFullBody();
 const statusEl=document.getElementById('geo-file-status');
-statusEl.innerHTML='<div class="card" style="color:var(--muted)">Génération du fichier en cours...</div>';
+const progressWrap=document.getElementById('geo-progress-wrap');
+const progressBar=document.getElementById('geo-progress-bar');
+const progressLabel=document.getElementById('geo-progress-label');
+const progressCount=document.getElementById('geo-progress-count');
+progressWrap.classList.remove('hidden');
+progressBar.style.width='0%';
+progressLabel.textContent='G\u00e9n\u00e9ration en cours...';
+progressCount.textContent='0/0';
+statusEl.innerHTML='';
 try{
-const res=await apiFetch('/geoloc/generate-file',{method:'POST',body:JSON.stringify(body)});
+const res=await apiFetch('/geoloc/build-file',{method:'POST',body:JSON.stringify(body)});
 const fileKey=res.file_key;
 const total=res.total;
+progressCount.textContent=`0/${total}`;
 const poll=setInterval(async()=>{
 try{
 const st=await apiFetch('/geoloc/file-status/'+encodeURIComponent(fileKey));
-statusEl.innerHTML=`<div class="card" style="color:var(--muted)">Génération : ${st.done}/${st.total} pages...</div>`;
+const pct=st.total>0?Math.round((st.done/st.total)*100):0;
+progressBar.style.width=pct+'%';
+progressCount.textContent=`${st.done}/${st.total}`;
+progressLabel.textContent=`G\u00e9n\u00e9ration : ${pct}%`;
 if(st.status==='done'){
 clearInterval(poll);
-statusEl.innerHTML=`<div class="card result-box"><div class="result-msg">${total} pages générées</div><div style="margin-top:8px"><a href="/geoloc/download/${encodeURIComponent(fileKey)}" class="btn" style="text-decoration:none;display:inline-block">Télécharger le fichier Excel</a></div></div>`;
+progressBar.style.width='100%';
+progressLabel.textContent='Termin\u00e9 !';
+progressCount.textContent=`${st.total}/${st.total}`;
+statusEl.innerHTML=`<div class="card result-box" style="margin-top:12px"><div class="result-msg">${total} pages g\u00e9n\u00e9r\u00e9es avec succ\u00e8s</div><div style="margin-top:10px"><a href="/geoloc/download/${encodeURIComponent(fileKey)}" class="btn" style="text-decoration:none;display:inline-block;background:var(--success)">T\u00e9l\u00e9charger le fichier Excel</a></div></div>`;
 }
-}catch(e){clearInterval(poll);statusEl.innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;}
+}catch(e){clearInterval(poll);progressLabel.textContent='Erreur';statusEl.innerHTML=`<div class="card" style="color:var(--danger);margin-top:8px">${e.message}</div>`;}
 },2000);
-}catch(e){statusEl.innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;}
+}catch(e){progressWrap.classList.add('hidden');statusEl.innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;}
 }
 
 async function generateGeoloc(){
