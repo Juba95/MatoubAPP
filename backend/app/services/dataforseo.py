@@ -21,13 +21,13 @@ class DataForSEOClient:
     def get_serp_positions(self, keyword: str, location: str = "France", language: str = "fr"):
         """Récupérer les positions SERP pour un mot-clé (mode Standard = moins cher)"""
         with self._client() as client:
-            # Post task
             resp = client.post(f"{self.BASE_URL}/serp/google/organic/task_post", json=[{
                 "keyword": keyword,
                 "location_name": location,
                 "language_code": language,
                 "depth": 100,
             }])
+            resp.raise_for_status()
             data = resp.json()
             if data.get("tasks"):
                 task_id = data["tasks"][0].get("id")
@@ -38,6 +38,7 @@ class DataForSEOClient:
         """Récupérer le résultat d'une tâche SERP"""
         with self._client() as client:
             resp = client.get(f"{self.BASE_URL}/serp/google/organic/task_get/regular/{task_id}")
+            resp.raise_for_status()
             return resp.json()
 
     def get_keyword_data(self, keywords: list[str], location: str = "France"):
@@ -48,6 +49,7 @@ class DataForSEOClient:
                 "location_name": location,
                 "language_code": "fr",
             }])
+            resp.raise_for_status()
             return resp.json()
 
     def get_ranked_keywords(self, domain: str, location: str = "France"):
@@ -60,4 +62,5 @@ class DataForSEOClient:
                 "limit": 100,
                 "order_by": ["keyword_data.keyword_info.search_volume,desc"],
             }])
+            resp.raise_for_status()
             return resp.json()

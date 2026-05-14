@@ -55,9 +55,17 @@ GSC_SCOPES = "https://www.googleapis.com/auth/webmasters.readonly"
 GSC_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GSC_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
-# CSRF tokens pour OAuth (en mémoire, token → site_id)
+# CSRF tokens pour OAuth (en mémoire, token → (site_id, timestamp))
 import secrets
-_oauth_states: dict[str, int] = {}
+import time as _time
+_oauth_states: dict[str, tuple[int, float]] = {}
+
+def _cleanup_oauth_states():
+    """Supprime les tokens OAuth de plus de 10 minutes."""
+    now = _time.time()
+    expired = [k for k, (_, ts) in _oauth_states.items() if now - ts > 600]
+    for k in expired:
+        del _oauth_states[k]
 
 
 @router.get("/gsc/connect/{site_id}")
@@ -67,8 +75,9 @@ def gsc_connect(site_id: int, _: str = Depends(get_current_user)):
     if not s.gsc_client_id or not s.gsc_client_secret:
         raise HTTPException(status_code=400, detail="GSC_CLIENT_ID et GSC_CLIENT_SECRET non configurés dans .env")
 
+    _cleanup_oauth_states()
     state_token = secrets.token_urlsafe(32)
-    _oauth_states[state_token] = site_id
+    _oauth_states[state_token] = (site_id, _time.time())
 
     params = {
         "client_id": s.gsc_client_id,
@@ -90,7 +99,8 @@ def gsc_callback(
 ):
     """Callback Google OAuth — échange le code contre un refresh_token et le stocke."""
     s = get_settings()
-    site_id = _oauth_states.pop(state, None)
+    entry = _oauth_states.pop(state, None)
+    site_id = entry[0] if entry else None
     if not site_id:
         raise HTTPException(status_code=400, detail="Token OAuth invalide ou expiré — relance la connexion")
 
@@ -141,12 +151,16 @@ def gsc_list_properties(site_id: int, db: Session = Depends(get_db), _: str = De
     return {"properties": properties, "current": site.sc_property}
 
 
+class GSCSelectRequest(BaseModel):
+    property: str
+
+
 @router.post("/gsc/select/{site_id}")
-def gsc_select_property(site_id: int, data: dict, db: Session = Depends(get_db), _: str = Depends(get_current_user)):
+def gsc_select_property(site_id: int, data: GSCSelectRequest, db: Session = Depends(get_db), _: str = Depends(get_current_user)):
     """Sélectionne une propriété Search Console pour un site."""
     site = db.query(Site).filter(Site.id == site_id).first()
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
-    site.sc_property = data.get("property")
+    site.sc_property = data.property
     db.commit()
     return {"message": "Propriété GSC sélectionnée", "sc_property": site.sc_property}
