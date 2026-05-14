@@ -1000,8 +1000,23 @@ let h=`<div class="section-title mb-12">Pages géolocalisées</div><div class="c
 <div class="mb-16"><label>Régions</label><div class="wrap-btns" id="geo-regions">`;
 regions.forEach(r=>{h+=`<button class="btn2 region-btn" style="font-size:10px;padding:4px 10px" onclick="toggleRegion('${r.replace(/'/g,"\\'")}',this)">${r}</button>`;});
 h+=`</div></div><div class="mb-16 hidden" id="geo-depts-wrap"><label>Départements</label><div class="wrap-btns-sm" id="geo-depts"></div></div>
-<div class="flex-gap-10"><button class="btn" onclick="previewGeoloc()">Prévisualiser</button><span id="geo-gen-btn"></span></div>
-</div><div id="geo-result"></div><div id="geo-preview"></div>`;
+<div class="accent-title" style="margin-top:16px">Options d'export</div>
+<div class="grid2 mb-16">
+<div><label>Nom du site</label><input id="geo-sitename" placeholder="Mon Site Pro"></div>
+<div><label>Auteur WP</label><input id="geo-author" value="admin"></div>
+<div><label>Catégorie</label><input id="geo-category" placeholder="services"></div>
+<div><label>Image à la une (URL)</label><input id="geo-thumbnail" placeholder="https://..."></div>
+</div>
+<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+<label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="geo-divi"> Format Divi Builder</label>
+<label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="geo-ai-content"> Générer contenu IA (Claude — lent + coût API)</label>
+</div>
+<div class="flex-gap-10">
+<button class="btn" onclick="previewGeoloc()">Prévisualiser</button>
+<span id="geo-gen-btn"></span>
+<button class="btn" style="background:var(--success)" onclick="generateFile()">Générer fichier Excel</button>
+</div>
+</div><div id="geo-result"></div><div id="geo-file-status"></div><div id="geo-preview"></div>`;
 document.getElementById('tab-3').innerHTML=h;
 }
 
@@ -1057,6 +1072,43 @@ geoPreview.pages.forEach(p=>{h+=`<div class="preview-row"><span>${p.keyword}</sp
 if(geoPreview.total_pages>20)h+=`<div style="padding:8px;font-size:11px;color:var(--muted);text-align:center">... et ${geoPreview.total_pages-20} autres</div>`;
 h+=`</div></div>`;
 document.getElementById('geo-preview').innerHTML=h;
+}
+
+async function generateFile(){
+const domain=document.getElementById('geo-domain').value.trim();
+const kw=document.getElementById('geo-kw').value.trim();
+if(!domain||!kw){alert('Domaine et mot-clé requis');return;}
+const body={
+keyword_template:kw,
+site_name:document.getElementById('geo-sitename').value||domain,
+site_domain:domain,
+post_author:document.getElementById('geo-author').value||'admin',
+post_category:document.getElementById('geo-category').value||'',
+post_status:'draft',
+post_thumbnail:document.getElementById('geo-thumbnail').value||'',
+min_population:Number(document.getElementById('geo-pop').value),
+use_divi:document.getElementById('geo-divi').checked,
+generate_content:document.getElementById('geo-ai-content').checked,
+...(selRegs.length>0&&{regions:selRegs}),
+...(selDepts.length>0&&{departments:selDepts}),
+};
+const statusEl=document.getElementById('geo-file-status');
+statusEl.innerHTML='<div class="card" style="color:var(--muted)">Génération du fichier en cours...</div>';
+try{
+const res=await apiFetch('/geoloc/generate-file',{method:'POST',body:JSON.stringify(body)});
+const fileKey=res.file_key;
+const total=res.total;
+const poll=setInterval(async()=>{
+try{
+const st=await apiFetch('/geoloc/file-status/'+encodeURIComponent(fileKey));
+statusEl.innerHTML=`<div class="card" style="color:var(--muted)">Génération : ${st.done}/${st.total} pages...</div>`;
+if(st.status==='done'){
+clearInterval(poll);
+statusEl.innerHTML=`<div class="card result-box"><div class="result-msg">${total} pages générées</div><div style="margin-top:8px"><a href="/geoloc/download/${encodeURIComponent(fileKey)}" class="btn" style="text-decoration:none;display:inline-block">Télécharger le fichier Excel</a></div></div>`;
+}
+}catch(e){clearInterval(poll);statusEl.innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;}
+},2000);
+}catch(e){statusEl.innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;}
 }
 
 async function generateGeoloc(){

@@ -1,6 +1,9 @@
 import csv
 import os
-from fastapi import APIRouter, Depends, HTTPException, Query
+import io
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -210,3 +213,187 @@ def generate_geoloc(req: GeolocRequest, db: Session = Depends(get_db)):
         "total": created,
         "estimated_total_cost": round(created * 0.03, 2),
     }
+
+
+class GeolocFileRequest(BaseModel):
+    keyword_template: str         # ex: "serrurier" ou "serrurier {ville}"
+    site_name: str                # ex: "L'epaviste Pro"
+    site_domain: str              # ex: "lepaviste-pro.fr"
+    post_author: str = "admin"
+    post_category: str = ""
+    post_status: str = "draft"
+    post_thumbnail: str = ""
+    departments: list[str] | None = None
+    regions: list[str] | None = None
+    min_population: int = 5000
+    use_divi: bool = False
+    generate_content: bool = False  # Si True, génère le contenu via Claude (lent + coûteux)
+
+
+# Cache des fichiers générés
+_generated_files: dict[str, dict] = {}
+
+
+@router.post("/generate-file")
+def generate_file(req: GeolocFileRequest, background_tasks: BackgroundTasks):
+    """Génère un fichier Excel d'import WP avec toutes les pages géolocalisées."""
+    villes = load_villes(req.departments, req.regions, req.min_population)
+    file_key = f"{req.site_domain}_{req.keyword_template}_{len(villes)}"
+    _generated_files[file_key] = {"status": "running", "total": len(villes), "done": 0}
+
+    def run():
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Import WP"
+
+        # Colonnes
+        headers = [
+            "Ville actuelle", "SLUG", "post_title", "H1", "post_description",
+            "post_content", "post_thumbnail", "post_date", "post_author",
+            "post_category", "post_tag", "post_status", "Population", "Type",
+        ]
+        if req.use_divi:
+            headers.extend(["_et_pb_use_builder", "_et_pb_old_content"])
+        ws.append(headers)
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        claude = None
+        site_obj = None
+
+        if req.generate_content:
+            try:
+                from app.services.claude_content import ClaudeContentService
+                from app.models.site import Site as SiteModel
+                claude = ClaudeContentService()
+                # Créer un objet Site minimal pour Claude
+                site_obj = type("Site", (), {
+                    "niche": req.post_category or req.keyword_template,
+                    "editorial_tone": "conversationnel",
+                    "editorial_style": "",
+                    "avg_article_length": 1200,
+                })()
+            except Exception:
+                claude = None
+
+        for i, v in enumerate(villes):
+            # Keyword avec ville
+            if "{ville}" in req.keyword_template:
+                kw = req.keyword_template.replace("{ville}", v["name"])
+                slug_kw = req.keyword_template.replace("{ville}", v["slug"]).replace(" ", "-").lower()
+            else:
+                kw = f"{req.keyword_template} {v['name']}"
+                slug_kw = f"{req.keyword_template.replace(' ', '-').lower()}-{v['slug']}"
+
+            title = f"{kw.title()} | {req.site_name}"
+            h1 = kw.title()
+            meta_desc = f"Expert en {req.keyword_template} à {v['name']} ({v['department']}). Intervention rapide dans le {v['department']}. Devis gratuit."
+            tags = f"{req.keyword_template},{v['name'].lower()},{v['department']}"
+
+            # Contenu
+            content = ""
+            if claude and site_obj and req.generate_content:
+                try:
+                    result = claude.generate_geoloc_article(
+                        site_obj, keyword=kw, city=v["name"],
+                        department=v["department"], postal_code=v["postal_code"],
+                        region=v["region"],
+                    )
+                    import json, re
+                    raw = result["raw"]
+                    try:
+                        match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', raw)
+                        if match:
+                            data = json.loads(match.group(1))
+                        else:
+                            depth = 0
+                            start = None
+                            data = {}
+                            for ci, c in enumerate(raw):
+                                if c == '{':
+                                    if depth == 0: start = ci
+                                    depth += 1
+                                elif c == '}':
+                                    depth -= 1
+                                    if depth == 0 and start is not None:
+                                        try:
+                                            data = json.loads(raw[start:ci+1])
+                                            break
+                                        except json.JSONDecodeError:
+                                            start = None
+                        content = data.get("content", raw)
+                        if data.get("meta_description"):
+                            meta_desc = data["meta_description"]
+                        if data.get("title"):
+                            title = data["title"]
+                        if data.get("slug"):
+                            slug_kw = data["slug"]
+                    except Exception:
+                        content = raw
+                except Exception:
+                    content = f"<h2>{h1}</h2><p>Contenu à rédiger pour {v['name']}.</p>"
+            else:
+                content = f"<h2>{h1}</h2><p>Contenu à rédiger pour {v['name']} ({v['department']}).</p>"
+
+            # Divi wrapper
+            if req.use_divi:
+                divi_content = (
+                    f"[et_pb_section _builder_version='4.27.0' background_color='#FFFFFF']"
+                    f"[et_pb_row _builder_version='4.27.0'][et_pb_column type='4_4' _builder_version='4.27.0']"
+                    f"[et_pb_text _builder_version='4.27.0']{content}[/et_pb_text]"
+                    f"[/et_pb_column][/et_pb_row][/et_pb_section]"
+                )
+                row = [
+                    v["name"], slug_kw, title, h1, meta_desc,
+                    divi_content, req.post_thumbnail, today, req.post_author,
+                    req.post_category, tags, req.post_status,
+                    v["population"], "Ville", "on", "",
+                ]
+            else:
+                row = [
+                    v["name"], slug_kw, title, h1, meta_desc,
+                    content, req.post_thumbnail, today, req.post_author,
+                    req.post_category, tags, req.post_status,
+                    v["population"], "Ville",
+                ]
+
+            ws.append(row)
+            _generated_files[file_key]["done"] = i + 1
+
+        # Sauvegarder en mémoire
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+        _generated_files[file_key] = {
+            "status": "done",
+            "total": len(villes),
+            "done": len(villes),
+            "data": buffer.getvalue(),
+            "filename": f"import_{req.site_domain}_{len(villes)}_pages.xlsx",
+        }
+
+    background_tasks.add_task(run)
+    return {"message": f"Génération en cours ({len(villes)} pages)", "file_key": file_key, "total": len(villes)}
+
+
+@router.get("/file-status/{file_key}")
+def file_status(file_key: str):
+    """Vérifie le statut de la génération du fichier."""
+    data = _generated_files.get(file_key)
+    if not data:
+        raise HTTPException(status_code=404, detail="Fichier non trouvé")
+    return {"status": data["status"], "total": data.get("total", 0), "done": data.get("done", 0)}
+
+
+@router.get("/download/{file_key}")
+def download_file(file_key: str):
+    """Télécharge le fichier Excel généré."""
+    data = _generated_files.get(file_key)
+    if not data or data["status"] != "done":
+        raise HTTPException(status_code=404, detail="Fichier pas encore prêt")
+    buffer = io.BytesIO(data["data"])
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{data["filename"]}"'},
+    )
