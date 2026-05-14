@@ -1269,7 +1269,7 @@ Rapport genere par <b style="color:#7180ff">MatoubeAPP</b> â€” SEO Automation â€
 
 // Build and render PDF
 const wrapper=document.createElement('div');
-wrapper.style.cssText='position:absolute;left:-9999px;top:0;width:780px;padding:24px 28px;background:#fff;color:#1a1a2e;font-family:Inter,Helvetica,Arial,sans-serif;line-height:1.5';
+wrapper.style.cssText='position:fixed;left:0;top:0;width:780px;padding:24px 28px;background:#fff;color:#1a1a2e;font-family:Inter,Helvetica,Arial,sans-serif;line-height:1.5;z-index:99999;overflow:auto;max-height:100vh';
 wrapper.innerHTML=p;
 document.body.appendChild(wrapper);
 
@@ -1277,13 +1277,14 @@ html2pdf().set({
 margin:[12,10,12,10],
 filename:`rapport-geo-${domain}-${new Date().toISOString().slice(0,10)}.pdf`,
 image:{type:'jpeg',quality:0.98},
-html2canvas:{scale:2,useCORS:true,backgroundColor:'#ffffff',width:780},
+html2canvas:{scale:2,useCORS:true,backgroundColor:'#ffffff',scrollY:0,windowWidth:780},
 jsPDF:{unit:'mm',format:'a4',orientation:'portrait'},
-pagebreak:{mode:['css'],avoid:['tr','span']}
+pagebreak:{mode:['css'],avoid:['tr']}
 }).from(wrapper).save().then(()=>{
 document.body.removeChild(wrapper);
 btn.disabled=false;btn.textContent='Telecharger le rapport PDF';
-}).catch(()=>{
+}).catch((err)=>{
+console.error('[PDF] Error:',err);
 document.body.removeChild(wrapper);
 btn.disabled=false;btn.textContent='Telecharger le rapport PDF';
 });
