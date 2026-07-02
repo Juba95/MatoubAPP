@@ -1752,6 +1752,25 @@ ${geoOptCard('geo-concurrence','Analyse concurrentielle','Enrichit le contenu av
 ${geoOptCard('geo-schema','Schema.org JSON-LD','LocalBusiness + FAQPage + avis ★ + fil d\'Ariane dans chaque page → rich snippets en SERP.',true)}
 ${geoOptCard('geo-sitemaps','Sitemaps XML segmentés','Sitemap index + un sitemap par département, en zip prêt à uploader (indexation de masse).',true)}
 ${geoOptCard('geo-vary','Anti-footprint réseau','L\'ordre des sections varie selon le domaine : chaque site du réseau a sa propre structure.',true)}
+${geoOptCard('geo-local','Données locales réelles','Communes voisines réelles avec distances + code postal + département dans chaque page (anti-doorway).',true)}
+</div>
+
+<div class="accent-title" style="margin-bottom:10px">Qualité &amp; E-E-A-T <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">(le graal — ce qui fait ranker durablement)</span></div>
+<div class="mb-16" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px">
+${geoOptCard('geo-serp','Information gain (SERP réelle)','Analyse les pages qui rankent déjà et génère un contenu qui les dépasse (DataForSEO + Claude).',false)}
+${geoOptCard('geo-quality','Agent juge qualité','Note chaque variante comme le ferait Google (Helpful Content) et signale les pages faibles AVANT l\'import.',false)}
+${geoOptCard('geo-realreviews','Vrais avis (schema ★)','N\'active les étoiles Schema.org QUE si tu fournis de vrais avis — sinon risque d\'action manuelle Google.',false)}
+</div>
+<div id="geo-nap-wrap" class="hidden mb-16" style="background:var(--card2);padding:14px 16px;border-radius:8px">
+<div style="font-size:11px;color:var(--muted);margin-bottom:10px">NAP réel de l'entreprise (renforce le LocalBusiness comme entité — E-E-A-T). Optionnel mais recommandé.</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
+<div><label>Nom entreprise</label><input id="geo-nap-name" placeholder="Ex: KM Diag Immo"></div>
+<div><label>Téléphone</label><input id="geo-nap-phone" placeholder="01 23 45 67 89"></div>
+<div><label>Email</label><input id="geo-nap-email" placeholder="contact@..."></div>
+<div><label>Adresse</label><input id="geo-nap-address" placeholder="12 rue..."></div>
+<div><label>Ville siège</label><input id="geo-nap-city" placeholder="Paris"></div>
+<div><label>Code postal siège</label><input id="geo-nap-postal" placeholder="75001"></div>
+</div>
 </div>
 
 <div class="accent-title" style="margin-bottom:10px">Réglages</div>
@@ -1812,6 +1831,8 @@ h+=`<div ${stepStyle}>
 </div></div>`;
 
 document.getElementById('tab-3').innerHTML=h;
+const napChk=document.getElementById('geo-realreviews');
+if(napChk)napChk.addEventListener('change',()=>{document.getElementById('geo-nap-wrap').classList.toggle('hidden',!napChk.checked);});
 }
 
 function geoToggleStep(id,headerEl){
@@ -1894,6 +1915,11 @@ schema_org:document.getElementById('geo-schema').checked,
 use_paa:document.getElementById('geo-paa').checked,
 generate_sitemaps:document.getElementById('geo-sitemaps').checked,
 vary_structure:document.getElementById('geo-vary').checked,
+local_data:document.getElementById('geo-local').checked,
+serp_gain:document.getElementById('geo-serp').checked,
+quality_check:document.getElementById('geo-quality').checked,
+real_reviews:document.getElementById('geo-realreviews').checked,
+business_info:{name:document.getElementById('geo-nap-name').value.trim(),phone:document.getElementById('geo-nap-phone').value.trim(),email:document.getElementById('geo-nap-email').value.trim(),address:document.getElementById('geo-nap-address').value.trim(),city:document.getElementById('geo-nap-city').value.trim(),postal_code:document.getElementById('geo-nap-postal').value.trim()},
 video_url:document.getElementById('geo-video').value.trim(),
 nb_variants:Number(document.getElementById('geo-variantes').value)||1,
 source_text:document.getElementById('geo-source-text').value||'',
@@ -1938,7 +1964,7 @@ const step5=document.getElementById('geo-step5-body');
 if(step5&&step5.classList.contains('hidden')){step5.classList.remove('hidden');step5.style.display='';}
 }
 
-const GEO_STEP_LABELS={init:'Initialisation',analyze:'Analyse du texte source (Claude)',anchors:'G\u00e9n\u00e9ration des ancres de maillage',paa:'Questions Google (People Also Ask)',blocks:'Optimisation des blocs SEO',competitors:'Analyse concurrentielle',variants:'G\u00e9n\u00e9ration des variantes',assemble:'Assemblage des pages',saving:'Sauvegarde du fichier',done:'Termin\u00e9'};
+const GEO_STEP_LABELS={init:'Initialisation',analyze:'Analyse du texte source (Claude)',anchors:'G\u00e9n\u00e9ration des ancres de maillage',paa:'Questions Google (People Also Ask)',serp:'Analyse SERP (information gain)',quality:'Agent juge qualité',blocks:'Optimisation des blocs SEO',competitors:'Analyse concurrentielle',variants:'G\u00e9n\u00e9ration des variantes',assemble:'Assemblage des pages',saving:'Sauvegarde du fichier',done:'Termin\u00e9'};
 
 async function generateFile(){
 const domain=document.getElementById('geoloc-domain').value.trim();
@@ -1996,8 +2022,10 @@ progressLabel.textContent='Termin\u00e9 !';
 progressCount.textContent=`${st.total}/${st.total}`;
 const fk=fileKey.replace(/'/g,"\\'");
 const uniqHtml=st.uniqueness!=null?`<div style="margin-top:8px;font-size:12px;color:${st.uniqueness>=60?'var(--success)':'var(--danger)'};font-weight:600">Unicité du contenu : ${st.uniqueness}%${st.uniqueness<60?' — risque de désindexation, augmentez les variantes':''}</div>`:'';
+const q=st.quality;
+const qualHtml=q?`<div style="margin-top:8px;font-size:12px;color:${q.avg_score>=70?'var(--success)':q.avg_score>=50?'var(--warn)':'var(--danger)'};font-weight:600">Score qualité (juge IA) : ${q.avg_score}/100${q.weak_variants?` — ${q.weak_variants}/${q.total_variants} variante(s) faible(s)`:''}</div>${q.issues&&q.issues.length?`<div style="margin-top:4px;font-size:11px;color:var(--muted)">À améliorer : ${q.issues.map(esc).join(' · ')}</div>`:''}`:'';
 const smBtn=st.has_sitemaps?`<button class="btn2" style="margin-left:8px" onclick="downloadSitemaps('${fk}')">Sitemaps XML (zip)</button>`:'';
-statusEl.innerHTML=`<div class="card result-box" style="margin-top:12px"><div class="result-msg">${total} pages générées avec succès</div>${uniqHtml}<div style="margin-top:10px"><button class="btn" style="background:var(--success)" onclick="downloadGeoFile('${fk}')">Télécharger le fichier Excel</button>${smBtn}</div><div style="margin-top:8px;font-size:11px;color:var(--muted)">Après import WP All Import : uploade les sitemaps à la racine du site puis colle urls.txt dans l'onglet Indexation.</div></div>`;
+statusEl.innerHTML=`<div class="card result-box" style="margin-top:12px"><div class="result-msg">${total} pages générées avec succès</div>${uniqHtml}${qualHtml}<div style="margin-top:10px"><button class="btn" style="background:var(--success)" onclick="downloadGeoFile('${fk}')">Télécharger le fichier Excel</button>${smBtn}</div><div style="margin-top:8px;font-size:11px;color:var(--muted)">Après import WP All Import : uploade les sitemaps à la racine du site puis colle urls.txt dans l'onglet Indexation.</div></div>`;
 }
 }catch(e){clearInterval(poll);progressLabel.textContent='Erreur';statusEl.innerHTML=`<div class="card" style="color:var(--danger);margin-top:8px">${e.message}</div>`;}
 },2000);
@@ -2077,9 +2105,13 @@ const resEl=document.getElementById('idx-results');
 try{
 const d=await apiFetch('/indexation/check',{method:'POST',body:JSON.stringify({site_id:id,urls})});
 idxMsg(`✓ ${d.indexed}/${d.total} indexées`,d.indexed===d.total);
-let rh=`<div style="display:flex;gap:16px;margin-bottom:12px;font-size:13px;font-weight:700">
+let rh=`<div style="display:flex;gap:16px;margin-bottom:12px;font-size:13px;font-weight:700;flex-wrap:wrap">
 <span style="color:var(--success)">${d.indexed} indexées</span>
-<span style="color:${d.not_indexed?'var(--danger)':'var(--muted)'}">${d.not_indexed} non indexées</span></div>`;
+<span style="color:${d.not_indexed?'var(--danger)':'var(--muted)'}">${d.not_indexed} non indexées</span>
+${d.to_enrich&&d.to_enrich.length?`<span style="color:var(--warn)">${d.to_enrich.length} à enrichir</span>`:''}
+${d.to_resubmit&&d.to_resubmit.length?`<span style="color:var(--blue)">${d.to_resubmit.length} à re-soumettre</span>`:''}
+${d.to_prune&&d.to_prune.length?`<span style="color:var(--muted)">${d.to_prune.length} à élaguer</span>`:''}</div>`;
+if(d.recommendation)rh+=`<div class="card" style="margin-bottom:12px;background:var(--card2);font-size:12px;line-height:1.6">${esc(d.recommendation)}</div>`;
 d.results.forEach(r=>{
 rh+=`<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px">
 <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.url)}</span>

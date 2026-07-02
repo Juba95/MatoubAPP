@@ -622,6 +622,7 @@ def file_status(file_key: str):
         "step": data.get("step", ""),
         "error": data.get("error", ""),
         "uniqueness": data.get("uniqueness"),
+        "quality": data.get("quality"),
         "has_sitemaps": bool(data.get("sitemaps")),
     }
 
@@ -704,10 +705,15 @@ class FullPipelineRequest(BaseModel):
     colors: dict = {}
     video_url: str = ""              # URL vidéo (YouTube/Vimeo) insérée dans chaque page
     include_departments: bool = False  # Ajoute une page par département (Type=Département)
-    schema_org: bool = True          # Injecte LocalBusiness/FAQPage/AggregateRating/Breadcrumb JSON-LD
+    schema_org: bool = True          # Injecte LocalBusiness/FAQPage/Breadcrumb JSON-LD
     use_paa: bool = False            # FAQ basée sur les People Also Ask réels (DataForSEO)
     generate_sitemaps: bool = True   # Génère aussi le zip de sitemaps XML segmentés
     vary_structure: bool = True      # Ordre des sections propre au domaine (anti-footprint)
+    local_data: bool = True          # Bloc de contexte local réel (communes voisines + distances)
+    serp_gain: bool = False          # Analyse SERP réelle → information gain (DataForSEO + Claude)
+    quality_check: bool = False      # Agent juge qualité (Haiku) sur chaque variante
+    real_reviews: bool = False       # Émettre l'AggregateRating (uniquement si vrais avis)
+    business_info: dict = {}         # NAP réel : name/phone/email/address/city/postal_code/lat/lng
 
 
 @router.post("/analyze-source")
@@ -831,6 +837,36 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                 except Exception as exc:
                     logger.warning("PAA indisponibles (%s) — FAQ générée par Claude", exc)
 
+            # --- Step 2c: SERP information gain (optionnel, DataForSEO + Claude) ---
+            if req.serp_gain:
+                state["step"] = "serp"
+                try:
+                    from app.config import get_settings as _gs
+                    if _gs().dataforseo_login:
+                        from app.services.dataforseo import DataForSEOClient
+                        serp = DataForSEOClient().get_serp_top_results(
+                            ctx.get("keyword") or req.keyword_template
+                        )
+                        gain = engine.serp_information_gain(
+                            ctx.get("keyword") or req.keyword_template, serp
+                        )
+                        if gain.get("themes_a_couvrir") or gain.get("angle_differenciant"):
+                            ctx["serp_gain"] = gain
+                            # Injecte thèmes + angle dans le contexte métier lu par optimize_blocks
+                            extra = []
+                            if gain.get("angle_differenciant"):
+                                extra.append(f"Angle différenciant à exploiter : {gain['angle_differenciant']}")
+                            if gain.get("themes_a_couvrir"):
+                                extra.append("Thèmes que couvrent les pages qui rankent (à traiter) : "
+                                             + ", ".join(gain["themes_a_couvrir"][:8]))
+                            if gain.get("entites_importantes"):
+                                extra.append("Entités/termes sémantiques à intégrer : "
+                                             + ", ".join(gain["entites_importantes"][:10]))
+                            ctx["contexte_metier"] = (ctx.get("contexte_metier", "") + " " + " ".join(extra)).strip()
+                            logger.info("SERP gain : %d thèmes", len(gain.get("themes_a_couvrir", [])))
+                except Exception as exc:
+                    logger.warning("SERP gain indisponible (%s)", exc)
+
             # --- Step 3: Optimize blocks ---
             state["step"] = "blocks"
             blocs = engine.optimize_blocks(source_text, ctx, anchors, paa_questions=paa_questions)
@@ -909,6 +945,39 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
             uniq = UniquenessTracker()
             url_entries: list[dict] = []
 
+            # Agent juge qualité : évalue chaque variante sur une ville témoin
+            # (coût = nb_variants appels Haiku, pas un par page).
+            quality_report = None
+            if req.quality_check and villes:
+                state["step"] = "quality"
+                sample = villes[0]
+                sample_engine = villes_engine[0]
+                scores, all_issues, weak = [], [], 0
+                for vi, variant in enumerate(variants):
+                    sample_content = engine.assemble_page(
+                        blocs=variant, ville=sample_engine, ctx=ctx,
+                        maillage="", variant_idx=vi, use_divi=False,
+                        images=[], colors=req.colors,
+                        h1=replace_ville(h1_tpl, sample["name"]),
+                        avis=[], layout_seed=layout_seed,
+                    )
+                    verdict = engine.judge_quality(sample_content, ctx)
+                    if verdict.get("score") is not None:
+                        scores.append(verdict["score"])
+                    if not verdict.get("keep", True):
+                        weak += 1
+                    all_issues.extend(verdict.get("issues", [])[:3])
+                if scores:
+                    quality_report = {
+                        "avg_score": round(sum(scores) / len(scores)),
+                        "min_score": min(scores),
+                        "weak_variants": weak,
+                        "total_variants": len(variants),
+                        "issues": list(dict.fromkeys(all_issues))[:8],
+                    }
+                    logger.info("Juge qualité : score moyen %s/100, %d variantes faibles",
+                                quality_report["avg_score"], weak)
+
             for i, v in enumerate(villes):
                 # Rotate variants
                 variant = variants[i % len(variants)]
@@ -929,11 +998,21 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                 for ph, val in replacements_pre.items():
                     h1_page = h1_page.replace(ph, val)
 
-                # Pages hub (département) : annuaire de toutes leurs communes.
-                # Pages villes : lien remontant vers leur page département.
+                # Bloc de contexte local réel (communes voisines + distances) —
+                # données factuelles uniques par ville, cœur de la valeur locale.
                 extra_html = ""
                 dept_name = DEPT_NAMES.get(v["department"], v["department"])
                 dept_slug = f"{slug_base}-{slugify(dept_name)}"
+                if req.local_data and not is_dept:
+                    extra_html += engine.local_context_block(
+                        villes_engine[i], villes_engine, ctx,
+                        postal_code=v.get("postal_code", ""),
+                        department=v["department"], region=v.get("region", ""),
+                        department_name=dept_name,
+                    )
+
+                # Pages hub (département) : annuaire de toutes leurs communes.
+                # Pages villes : lien remontant vers leur page département.
                 if is_dept:
                     dept_cities = cities_by_dept.get(v["department"], [])
                     if dept_cities:
@@ -942,12 +1021,12 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                             f'{ctx.get("keyword", "").capitalize()} {c["name"]}</a></li>'
                             for c in dept_cities
                         )
-                        extra_html = (
+                        extra_html += (
                             f"<h2>Nos interventions dans les communes de {v['name']}</h2>"
                             f'<ul class="annuaire-communes" style="columns:3;column-gap:24px">{links}</ul>'
                         )
                 elif req.include_departments:
-                    extra_html = (
+                    extra_html += (
                         f"<p>Découvrez aussi notre page départementale : "
                         f'<a href="/{dept_slug}/">{ctx.get("keyword", "").capitalize()} {dept_name}</a></p>'
                     )
@@ -969,6 +1048,8 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                         faq_pairs=faq_pairs,
                         avis=engine.render_avis(avis, start=i, count=6),
                         breadcrumb=breadcrumb,
+                        real_reviews=req.real_reviews,
+                        business_info=req.business_info,
                     )
 
                 # Assemble content
@@ -1043,6 +1124,7 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                 "ctx": ctx,
                 "nb_variants": len(variants),
                 "uniqueness": uniq.score(),
+                "quality": quality_report,
                 "sitemaps": build_sitemaps_zip(req.site_domain, url_entries) if req.generate_sitemaps else None,
             }
 

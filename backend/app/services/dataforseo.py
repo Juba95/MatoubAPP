@@ -81,6 +81,37 @@ class DataForSEOClient:
                             questions.append(q)
         return questions
 
+    def get_serp_top_results(self, keyword: str, location: str = "France", language: str = "fr", n: int = 10) -> list[dict]:
+        """Top résultats organiques réels d'une SERP Google (titre + snippet + url).
+
+        Sert à l'information gain : comprendre ce que couvrent les pages qui
+        rankent déjà pour produire un contenu qui les dépasse.
+        """
+        with self._client() as client:
+            resp = client.post(f"{self.BASE_URL}/serp/google/organic/live/advanced", json=[{
+                "keyword": keyword,
+                "location_name": location,
+                "language_code": language,
+                "depth": max(10, n),
+            }])
+            resp.raise_for_status()
+            data = resp.json()
+
+        out: list[dict] = []
+        for task in data.get("tasks") or []:
+            for result in task.get("result") or []:
+                for item in result.get("items") or []:
+                    if item.get("type") != "organic":
+                        continue
+                    out.append({
+                        "title": item.get("title", ""),
+                        "description": item.get("description", ""),
+                        "url": item.get("url", ""),
+                    })
+                    if len(out) >= n:
+                        return out
+        return out
+
     def get_ranked_keywords(self, domain: str, location: str = "France"):
         """Mots-clés sur lesquels un domaine est positionné"""
         with self._client() as client:

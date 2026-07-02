@@ -157,9 +157,53 @@ def check_indexation(req: CheckRequest, db: Session = Depends(get_db)):
                 raise HTTPException(status_code=502, detail=f"Inspection GSC en échec : {exc}")
 
     indexed = sum(1 for r in results if r["indexed"])
+    buckets = _classify(results)
     return {
         "total": len(results),
         "indexed": indexed,
         "not_indexed": len(results) - indexed,
+        "to_enrich": buckets["to_enrich"],
+        "to_resubmit": buckets["to_resubmit"],
+        "to_prune": buckets["to_prune"],
+        "recommendation": buckets["recommendation"],
         "results": results,
     }
+
+
+def _classify(results: list[dict]) -> dict:
+    """Classe les URLs non indexées en actions concrètes.
+
+    - to_resubmit : découverte mais pas encore explorée → re-soumettre (IndexNow)
+    - to_enrich   : explorée/détectée mais jugée sans valeur → enrichir le contenu
+    - to_prune    : erreur/exclue durable → envisager la suppression
+    """
+    to_enrich, to_resubmit, to_prune = [], [], []
+    for r in results:
+        if r.get("indexed"):
+            continue
+        state = (r.get("coverage_state") or "").lower()
+        url = r["url"]
+        # 1. Erreur durable → élaguer (testé en premier)
+        if r.get("verdict") in ("ERROR", "FAIL") or "error" in state or "not found" in state or "404" in state:
+            to_prune.append(url)
+        # 2. Crawlée/détectée mais non indexée → Google juge la page faible → enrichir
+        elif "explor" in state or "crawled" in state or "détect" in state or "detected" in state or "duplicate" in state or "soft 404" in state:
+            to_enrich.append(url)
+        # 3. Découverte mais pas encore explorée → re-soumettre
+        elif "découverte" in state or "discovered" in state or not state:
+            to_resubmit.append(url)
+        # 4. Inconnu → enrichir par prudence
+        else:
+            to_enrich.append(url)
+
+    if to_enrich and len(to_enrich) >= max(1, len(results) // 3):
+        rec = ("Beaucoup de pages sont crawlées mais non indexées : c'est le signal "
+               "« contenu à faible valeur ». Enrichis-les (données locales réelles, "
+               "profondeur) ou élague les plus faibles — c'est le levier n°1.")
+    elif to_resubmit:
+        rec = "Des pages sont découvertes mais pas encore explorées : re-soumets-les via IndexNow et patiente."
+    elif to_prune:
+        rec = "Des pages sont en erreur : vérifie qu'elles répondent en 200, sinon supprime-les."
+    else:
+        rec = "Indexation saine."
+    return {"to_enrich": to_enrich, "to_resubmit": to_resubmit, "to_prune": to_prune, "recommendation": rec}

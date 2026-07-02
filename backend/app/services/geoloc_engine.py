@@ -87,19 +87,27 @@ def build_jsonld(
     faq_pairs: list[tuple[str, str]] | None = None,
     avis: list[dict] | None = None,
     breadcrumb: list[tuple[str, str]] | None = None,
+    real_reviews: bool = False,
+    business_info: dict | None = None,
 ) -> str:
     """Construit les blocs Schema.org JSON-LD d'une page géolocalisée.
 
-    Génère LocalBusiness (+AggregateRating), FAQPage et BreadcrumbList —
-    c'est ce qui déclenche les rich snippets (étoiles, FAQ dépliée) en SERP.
+    Génère LocalBusiness, FAQPage et BreadcrumbList.
+
+    SÉCURITÉ : l'AggregateRating (étoiles) n'est émis QUE si *real_reviews*
+    est True. Émettre un balisage d'avis inventé est contraire aux règles de
+    données structurées de Google et déclenche des actions manuelles — par
+    défaut on ne l'émet donc pas. *business_info* (nom/adresse/tél réels)
+    renforce le LocalBusiness en tant qu'entité (E-E-A-T).
     """
     base = f"https://{site_domain.replace('https://', '').replace('http://', '').rstrip('/')}"
+    info = business_info or {}
     schemas = []
 
     business: dict = {
         "@context": "https://schema.org",
         "@type": "LocalBusiness",
-        "name": site_name,
+        "name": info.get("name") or site_name,
         "url": base,
         "description": f"{keyword.capitalize()} à {ville.get('nom', '')}",
         "areaServed": {
@@ -107,32 +115,48 @@ def build_jsonld(
             "name": ville.get("nom", ""),
         },
     }
-    if ville.get("postal_code"):
+    if info.get("phone"):
+        business["telephone"] = info["phone"]
+    if info.get("email"):
+        business["email"] = info["email"]
+
+    # Adresse : réelle (business_info) en priorité, sinon localité de la ville
+    if info.get("address"):
+        business["address"] = {
+            "@type": "PostalAddress",
+            "streetAddress": info["address"],
+            "postalCode": info.get("postal_code") or ville.get("postal_code", ""),
+            "addressLocality": info.get("city") or ville.get("nom", ""),
+            "addressCountry": "FR",
+        }
+    elif ville.get("postal_code"):
         business["address"] = {
             "@type": "PostalAddress",
             "postalCode": ville["postal_code"],
             "addressLocality": ville.get("nom", ""),
             "addressCountry": "FR",
         }
-    if ville.get("lat") and ville.get("lon"):
-        business["geo"] = {
-            "@type": "GeoCoordinates",
-            "latitude": ville["lat"],
-            "longitude": ville["lon"],
-        }
-    if avis:
+
+    if info.get("lat") and info.get("lng"):
+        business["geo"] = {"@type": "GeoCoordinates", "latitude": info["lat"], "longitude": info["lng"]}
+    elif ville.get("lat") and ville.get("lon"):
+        business["geo"] = {"@type": "GeoCoordinates", "latitude": ville["lat"], "longitude": ville["lon"]}
+
+    # AggregateRating uniquement si on a de VRAIS avis (anti-pénalité)
+    if avis and real_reviews:
         notes = []
         for a in avis:
             try:
                 notes.append(max(1, min(5, int(a.get("note", 5)))))
             except (TypeError, ValueError):
                 notes.append(5)
-        business["aggregateRating"] = {
-            "@type": "AggregateRating",
-            "ratingValue": round(sum(notes) / len(notes), 1),
-            "reviewCount": len(notes),
-            "bestRating": 5,
-        }
+        if notes:
+            business["aggregateRating"] = {
+                "@type": "AggregateRating",
+                "ratingValue": round(sum(notes) / len(notes), 1),
+                "reviewCount": len(notes),
+                "bestRating": 5,
+            }
     schemas.append(business)
 
     if faq_pairs:
@@ -222,7 +246,10 @@ def scrape_page(url: str, timeout: float = 15.0) -> dict:
 class GeolocEngine:
     """Orchestre la generation de pages geolocalisees SEO via Claude."""
 
+    # Modele de fond pour la redaction et la synthese SERP (raisonnement).
     DEFAULT_MODEL = "claude-sonnet-4-6"
+    # Modele economique pour l'agent juge qualite (appele en volume).
+    JUDGE_MODEL = "claude-haiku-4-5"
 
     def __init__(self, model: Optional[str] = None):
         settings = get_settings()
@@ -239,11 +266,12 @@ class GeolocEngine:
         user_prompt: str,
         max_tokens: int = 4096,
         temperature: float = 0.7,
+        model: Optional[str] = None,
     ) -> str:
         """Envoie un prompt a Claude et retourne la reponse texte."""
         try:
             response = self.client.messages.create(
-                model=self.model,
+                model=model or self.model,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 system=system,
@@ -260,9 +288,10 @@ class GeolocEngine:
         user_prompt: str,
         max_tokens: int = 4096,
         temperature: float = 0.5,
+        model: Optional[str] = None,
     ) -> dict | list:
         """Envoie un prompt a Claude et parse la reponse en JSON."""
-        raw = self._call_claude(system, user_prompt, max_tokens, temperature)
+        raw = self._call_claude(system, user_prompt, max_tokens, temperature, model=model)
 
         # Tenter d'extraire le JSON depuis un bloc ```json ... ```
         match = re.search(r"```(?:json)?\s*([\[{][\s\S]*?[}\]])\s*```", raw)
@@ -544,6 +573,102 @@ Reponds uniquement avec le JSON."""
         return self._call_claude_json(system, user_prompt)
 
     # ------------------------------------------------------------------
+    # 5b. SERP information gain (pages qui rankent reellement)
+    # ------------------------------------------------------------------
+
+    def serp_information_gain(self, keyword: str, serp_results: list[dict]) -> dict:
+        """
+        Analyse les pages qui rankent DEJA (titres + snippets de la SERP Google)
+        et en deduit les themes a couvrir + un angle differenciant.
+
+        *serp_results* : liste de {title, description, url} (top organique).
+
+        Returns:
+            dict {themes_a_couvrir, angle_differenciant, entites_importantes}.
+        """
+        if not serp_results:
+            return {"themes_a_couvrir": [], "angle_differenciant": "", "entites_importantes": []}
+
+        serp_text = "\n".join(
+            f"- {r.get('title', '')} | {r.get('description', '')[:200]}"
+            for r in serp_results[:10]
+        )
+        system = (
+            "Tu es un expert SEO specialise en information gain. "
+            "Tu analyses les pages qui rankent en top Google et tu identifies "
+            "comment produire un contenu qui couvre la meme intention PLUS quelque "
+            "chose que les autres n'ont pas. Reponds en JSON valide."
+        )
+        user_prompt = f"""Mot-cle cible : {keyword}
+
+PAGES QUI RANKENT DEJA (top Google) :
+{serp_text}
+
+Retourne un JSON avec :
+- "themes_a_couvrir" : 5 a 8 themes/sous-sujets que couvrent ces pages et qu'il FAUT traiter (intention de recherche)
+- "angle_differenciant" : 1-2 phrases decrivant un angle ou une valeur ajoutee que ces pages n'ont PAS (information gain)
+- "entites_importantes" : liste des termes/entites (normes, certifications, concepts) recurrents a integrer pour la pertinence semantique
+
+Reponds uniquement avec le JSON."""
+        try:
+            result = self._call_claude_json(system, user_prompt)
+            return result if isinstance(result, dict) else {}
+        except (ValueError, RuntimeError) as exc:
+            logger.warning("SERP information gain indisponible : %s", exc)
+            return {"themes_a_couvrir": [], "angle_differenciant": "", "entites_importantes": []}
+
+    # ------------------------------------------------------------------
+    # 5c. Agent juge qualite (modele economique)
+    # ------------------------------------------------------------------
+
+    def judge_quality(self, content_html: str, ctx: dict) -> dict:
+        """
+        Note la qualite SEO d'une page assemblee (0-100) via le modele juge.
+
+        Evalue : valeur locale reelle, unicite percue, couverture de l'intention,
+        risque de contenu « doorway ». Retourne un verdict actionnable.
+
+        Returns:
+            dict {score, verdict, issues: list[str], keep: bool}.
+        """
+        text = re.sub(r"\[[^\]]*\]", " ", content_html)  # retire shortcodes Divi
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()[:3500]
+
+        system = (
+            "Tu es un evaluateur qualite SEO tres exigeant, dans la peau de "
+            "l'algorithme Google Helpful Content. Tu juges si une page merite "
+            "d'etre indexee ou si c'est une doorway page generique. "
+            "Reponds en JSON valide uniquement."
+        )
+        user_prompt = f"""Mot-cle : {ctx.get("keyword", "")} — Secteur : {ctx.get("secteur", "")}
+
+CONTENU DE LA PAGE (texte extrait) :
+{text}
+
+Evalue et retourne un JSON :
+- "score" : entier 0-100 (0 = doorway generique a desindexer, 100 = page locale a forte valeur)
+- "verdict" : une phrase de synthese
+- "issues" : liste des problemes concrets (thin content, valeur locale absente, remplissage, intention non couverte...)
+- "keep" : booleen — true si la page merite d'etre publiee telle quelle
+
+Sois severe : si le contenu pourrait s'appliquer a n'importe quelle ville sans changement, score < 50.
+Reponds uniquement avec le JSON."""
+        try:
+            result = self._call_claude_json(
+                system, user_prompt, max_tokens=1024, temperature=0.3,
+                model=self.JUDGE_MODEL,
+            )
+            if not isinstance(result, dict):
+                return {"score": None, "verdict": "", "issues": [], "keep": True}
+            result.setdefault("issues", [])
+            result.setdefault("keep", (result.get("score") or 0) >= 55)
+            return result
+        except (ValueError, RuntimeError) as exc:
+            logger.warning("Juge qualite indisponible : %s", exc)
+            return {"score": None, "verdict": "", "issues": [], "keep": True}
+
+    # ------------------------------------------------------------------
     # 6. Maillage interne (liens vers villes proches)
     # ------------------------------------------------------------------
 
@@ -600,6 +725,86 @@ Reponds uniquement avec le JSON."""
             )
         lines.append("</ul>")
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # 6b. Contexte local reel (communes voisines depuis la base)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def nearest_communes(ville: dict, all_villes: list[dict], nb: int = 6) -> list[dict]:
+        """Communes reelles les plus proches (avec distance km), depuis la base.
+
+        Donnees verifiables et uniques par ville — c'est ce qui distingue une
+        vraie page locale d'une doorway page. Zero appel API.
+        """
+        lat, lon = ville.get("lat"), ville.get("lon")
+        if lat is None or lon is None:
+            return []
+        name = ville.get("nom", "").lower()
+        dists = []
+        for v in all_villes:
+            if v.get("nom", "").lower() == name:
+                continue
+            if v.get("lat") is None or v.get("lon") is None:
+                continue
+            d = haversine(lat, lon, v["lat"], v["lon"])
+            dists.append({"nom": v["nom"], "slug": v.get("slug", slugify(v["nom"])), "km": round(d, 1)})
+        dists.sort(key=lambda x: x["km"])
+        return dists[:nb]
+
+    def local_context_block(
+        self, ville: dict, all_villes: list[dict], ctx: dict,
+        postal_code: str = "", department: str = "", region: str = "",
+        department_name: str = "",
+    ) -> str:
+        """Bloc HTML de contexte local reel : communes voisines + distances +
+        code postal + departement. Donnees factuelles, uniques par ville.
+        """
+        nom = ville.get("nom", "")
+        keyword = ctx.get("keyword", "")
+        voisines = self.nearest_communes(ville, all_villes, nb=6)
+        parts = [f'<div class="contexte-local">']
+        parts.append(f"<h2>{keyword.capitalize()} à {nom} et ses environs</h2>")
+        meta_bits = []
+        if postal_code:
+            meta_bits.append(f"code postal <strong>{postal_code}</strong>")
+        if department:
+            meta_bits.append(f"département {(department_name or department)} ({department})")
+        if region:
+            meta_bits.append(region)
+        if meta_bits:
+            parts.append(
+                f"<p>Nous intervenons à <strong>{nom}</strong> ({', '.join(meta_bits)}) "
+                f"ainsi que dans les communes voisines.</p>"
+            )
+        if voisines:
+            items = "".join(
+                f"<li>{v['nom']} <span style='color:#888'>(à {v['km']} km)</span></li>"
+                for v in voisines
+            )
+            parts.append(
+                f"<p>Zone d'intervention autour de {nom} :</p>"
+                f'<ul class="communes-voisines">{items}</ul>'
+            )
+        parts.append("</div>")
+        return "\n".join(parts)
+
+    def local_facts_text(self, ville: dict, all_villes: list[dict],
+                         postal_code: str = "", department: str = "",
+                         department_name: str = "") -> str:
+        """Version texte des faits locaux, a injecter dans un prompt per-city
+        (chemin generate_content) pour que le modele tisse de vraies donnees."""
+        nom = ville.get("nom", "")
+        voisines = self.nearest_communes(ville, all_villes, nb=6)
+        bits = [f"Ville : {nom}"]
+        if postal_code:
+            bits.append(f"Code postal : {postal_code}")
+        if department:
+            bits.append(f"Département : {(department_name or department)} ({department})")
+        if voisines:
+            bits.append("Communes voisines réelles (avec distances) : "
+                        + ", ".join(f"{v['nom']} ({v['km']} km)" for v in voisines))
+        return "\n".join(bits)
 
     # ------------------------------------------------------------------
     # 7. Assemblage de la page complete
