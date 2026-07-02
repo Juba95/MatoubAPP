@@ -234,7 +234,7 @@ h+=`<div id="add-site-form" class="hidden" style="margin-bottom:16px"><div class
 <div><label>Hébergeur</label><input id="ns-host" placeholder="OVH, Hetzner..."></div>
 <div><label>Ton éditorial</label><select id="ns-tone"><option value="conversationnel">Conversationnel</option><option value="journalistique">Journalistique</option><option value="technique">Technique</option><option value="commercial">Commercial</option><option value="academique">Académique</option></select></div>
 <div style="display:flex;align-items:flex-end"><button class="btn" onclick="addSite()">Créer</button></div>
-</div></div>`;
+</div><div id="ns-msg" style="font-size:12px;margin-top:8px;min-height:16px"></div></div>`;
 
 if(sites.length===0){
 h+=`<div class="card text-center" style="color:var(--muted);padding:32px">Aucun site \u2014 ajoute ton premier site</div>`;
@@ -381,12 +381,15 @@ async function addSite(){
 const d={name:document.getElementById('ns-name').value.trim(),domain:document.getElementById('ns-domain').value.trim(),editorial_tone:document.getElementById('ns-tone').value};
 const niche=document.getElementById('ns-niche').value.trim();if(niche)d.niche=niche;
 const host=document.getElementById('ns-host').value.trim();if(host)d.host_provider=host;
-if(!d.name||!d.domain)return;
+const msg=document.getElementById('ns-msg');
+const miss=[];if(!d.name)miss.push('le nom');if(!d.domain)miss.push('le domaine');
+if(miss.length){msg.style.color='var(--warn)';msg.textContent='⚠️ Renseignez '+miss.join(' et ')+' pour créer le site.';return;}
+msg.style.color='var(--muted)';msg.textContent='Création...';
 try{await apiFetch('/sites/',{method:'POST',body:JSON.stringify(d)});
 document.getElementById('ns-name').value='';document.getElementById('ns-domain').value='';document.getElementById('ns-niche').value='';document.getElementById('ns-host').value='';
 document.getElementById('add-site-form').classList.add('hidden');
 loadOverview();
-}catch(e){alert('Erreur : '+(e.message||'impossible de créer le site'));}
+}catch(e){msg.style.color='var(--danger)';msg.textContent='Erreur : '+(e.message||'impossible de créer le site');}
 }
 
 async function validateAction(id){
@@ -1549,8 +1552,11 @@ document.getElementById('g-logo-url-wrap').classList.toggle('hidden',m!=='url');
 }
 
 async function runFullInstall(){
+const statusEl=document.getElementById('gen-status');
+const req=[['g-domain','le domaine (Étape 1)'],['g-ftp-host','l\'hôte FTP (Étape 2)'],['g-ftp-user','l\'utilisateur FTP (Étape 2)'],['g-ftp-pass','le mot de passe FTP (Étape 2)'],['g-db-name','le nom de la base MySQL (Étape 3)'],['g-db-user','l\'utilisateur MySQL (Étape 3)'],['g-db-pass','le mot de passe MySQL (Étape 3)']];
+const miss=req.filter(([id])=>!document.getElementById(id).value.trim()).map(([,lbl])=>lbl);
+if(miss.length){statusEl.innerHTML=`<span style="color:var(--warn);font-size:13px">⚠️ Renseignez : ${miss.join(', ')}.</span>`;return;}
 const domain=document.getElementById('g-domain').value.trim();
-if(!domain){alert('Domaine requis');return;}
 
 const genMode=document.querySelector('input[name="g-gen-mode"]:checked').value;
 const compUrls=[];
@@ -1958,8 +1964,34 @@ cta:document.getElementById('geo-color-cta').value
 return body;
 }
 
+// Déplie une section (étape) si elle est repliée
+function geoExpandStep(bodyId){
+const b=document.getElementById(bodyId);
+if(b&&b.classList.contains('hidden')){b.classList.remove('hidden');b.style.display='';const head=b.previousElementSibling;const chev=head&&head.querySelector('.geo-chevron');if(chev)chev.style.transform='';}
+}
+// Vérifie les champs requis. Retourne un message si incomplet, '' sinon.
+function geoValidate(){
+const domain=document.getElementById('geoloc-domain').value.trim();
+const kw=document.getElementById('geo-kw').value.trim();
+const missing=[];
+if(!domain)missing.push('le domaine du site');
+if(!kw)missing.push('le mot-clé template');
+if(missing.length){
+geoExpandStep('geo-step1-body');
+return `<b>Étape 1 — Configuration</b> : renseignez ${missing.join(' et ')} avant de générer.`;
+}
+return '';
+}
+// Affiche un message de validation (jaune) dans la zone de statut
+function geoShowValidation(msg){
+const el=document.getElementById('geo-file-status');
+if(el)el.innerHTML=`<div class="card" style="color:var(--warn);border:1px solid var(--warn);background:rgba(255,193,7,.08);margin-top:8px;font-size:13px">⚠️ ${msg}</div>`;
+document.getElementById('geoloc-result').innerHTML='';
+const pw=document.getElementById('geo-progress-wrap');if(pw)pw.classList.add('hidden');
+}
 async function previewGeoloc(){
-if(!document.getElementById('geoloc-domain').value||!document.getElementById('geo-kw').value)return;
+const err=geoValidate();
+if(err){geoShowValidation(err);return;}
 const siteId=await ensureGeoSite();
 if(!siteId){alert('Impossible de trouver/cr\u00e9er le site');return;}
 document.getElementById('geo-preview').innerHTML='';document.getElementById('geo-gen-btn').innerHTML='';
@@ -2003,9 +2035,10 @@ el.innerHTML=`Coût estimé : <b>≈ ${d.estimated_eur.toFixed(2)} €</b> (${d.
 }catch(e){el.textContent='';}
 }
 async function generateFile(){
+const err=geoValidate();
+if(err){geoShowValidation(err);return;}
 const domain=document.getElementById('geoloc-domain').value.trim();
 const kw=document.getElementById('geo-kw').value.trim();
-if(!domain||!kw){alert('Domaine et mot-cl\u00e9 requis');return;}
 const useAI=document.getElementById('geo-ai-content').checked;
 const statusEl=document.getElementById('geo-file-status');
 const progressWrap=document.getElementById('geo-progress-wrap');
@@ -2075,8 +2108,10 @@ statusEl.innerHTML=stepsHtml+`<div class="card result-box" style="margin-top:12p
 }
 
 async function generateGeoloc(){
+const err=geoValidate();
+if(err){geoShowValidation(err);return;}
 const siteId=await ensureGeoSite();
-if(!siteId)return;
+if(!siteId){geoShowValidation('Impossible de créer le site — vérifiez le domaine (Étape 1).');return;}
 try{const res=await apiFetch('/geoloc/generate',{method:'POST',body:JSON.stringify(geoBody(siteId))});
 document.getElementById('geoloc-result').innerHTML=`<div class="card result-box"><div class="result-msg">${res.message}</div><div class="result-sub">Visible dans la file de validation (Overview)</div></div>`;
 }catch(e){document.getElementById('geoloc-result').innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;}
