@@ -598,7 +598,7 @@ La palette de couleurs DOIT etre differente des couleurs : {all_colors}.
 
         try:
             r = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=6000,
                 system=system,
                 messages=[{"role": "user", "content": user}],
@@ -1173,7 +1173,7 @@ DIVI SHORTCODE RULES:
         for attempt in range(1, 4):
             try:
                 r = self.client.messages.create(
-                    model="claude-sonnet-4-20250514",
+                    model="claude-sonnet-4-6",
                     max_tokens=max_tokens,
                     system=system,
                     messages=[{"role": "user", "content": user_prompt}],
@@ -1257,7 +1257,7 @@ Rules:
 
         try:
             r = claude_client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=2000,
                 system=system,
                 messages=[{
@@ -1432,7 +1432,7 @@ Prompt rules:
 
         try:
             r = claude_client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=600,
                 system=system,
                 messages=[{
@@ -2157,7 +2157,9 @@ class WPGeneratorPipeline:
                 installer = WPInstaller(
                     site, log_callback=lambda m: self._log(m, log_callback),
                 )
-                wp_result = installer.install_wordpress()
+                wp_result = installer.install_wordpress(
+                    admin_password=config.get("admin_pass") or None,
+                )
                 result["wordpress"] = wp_result
                 result["steps_completed"].append("install_wp")
             except Exception as e:
@@ -2320,13 +2322,15 @@ class WPGeneratorPipeline:
             self._log("Etape 8 : Deploiement sur WordPress", log_callback)
             deployer: WPDeployer | None = None
             try:
-                admin_user = config.get(
-                    "admin_user",
-                    result.get("wordpress", {}).get("username", "admin"),
+                # Priorité au mot de passe réellement installé (étape 1) :
+                # c'est le seul qui garantit un login WP fonctionnel.
+                admin_user = (
+                    result.get("wordpress", {}).get("username")
+                    or config.get("admin_user", "admin")
                 )
-                admin_pass = config.get(
-                    "admin_pass",
-                    result.get("wordpress", {}).get("password", ""),
+                admin_pass = (
+                    result.get("wordpress", {}).get("password")
+                    or config.get("admin_pass", "")
                 )
                 deployer = WPDeployer(
                     domain=domain,

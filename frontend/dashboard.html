@@ -135,9 +135,25 @@ let r;
 try{r=await fetch(API+path,{...opts,headers:h});}
 catch(e){console.error('[API] Network error:',e);throw new Error('Réseau indisponible');}
 console.log(`[API] Response: ${r.status} ${r.statusText}`);
-if(r.status===401){localStorage.removeItem('pbn_token');location.reload();return;}
-if(!r.ok&&r.status!==401){const txt=await r.text().catch(()=>'');console.error('[API] Error body:',txt);let msg;try{msg=JSON.parse(txt).detail||txt;}catch{msg=txt||r.statusText;}throw new Error(msg);}
+if(r.status===401&&!path.startsWith('/auth/login')){localStorage.removeItem('pbn_token');location.reload();return;}
+if(!r.ok){const txt=await r.text().catch(()=>'');console.error('[API] Error body:',txt);let msg;try{msg=JSON.parse(txt).detail||txt;}catch{msg=txt||r.statusText;}throw new Error(msg);}
 return r.json();
+}
+// Téléchargement authentifié (le header Authorization ne passe pas via un simple <a href>)
+async function downloadGeoFile(fileKey){
+const h={};if(TOKEN)h['Authorization']='Bearer '+TOKEN;
+try{
+const r=await fetch(API+'/geoloc/download/'+encodeURIComponent(fileKey),{headers:h});
+if(!r.ok){const txt=await r.text().catch(()=>'');let msg;try{msg=JSON.parse(txt).detail||txt;}catch{msg=txt||r.statusText;}throw new Error(msg);}
+const blob=await r.blob();
+const cd=r.headers.get('Content-Disposition')||'';
+const m=cd.match(/filename="?([^";]+)"?/);
+const a=document.createElement('a');
+a.href=URL.createObjectURL(blob);
+a.download=m?m[1]:'import_geoloc.xlsx';
+document.body.appendChild(a);a.click();a.remove();
+setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+}catch(e){alert('Téléchargement impossible : '+e.message);}
 }
 const fmt=n=>n!=null?Number(n).toLocaleString('fr-FR'):'\u2014';
 const deltaHtml=v=>{if(!v||v===0)return'';const p=v>0;return `<span class="${p?'up':'down'}">${p?'+':''}${Number(v).toFixed(1)}</span>`;};
@@ -1591,7 +1607,7 @@ h+=`<div ${stepStyle}>
 </div>
 <div id="geo-step1-body" ${stepBody}>
 <div class="grid2 mb-16">
-<div><label>Domaine du site</label><input id="geo-domain" placeholder="monsite.fr"></div>
+<div><label>Domaine du site</label><input id="geoloc-domain" placeholder="monsite.fr"></div>
 <div><label>Nom du site</label><input id="geo-sitename" placeholder="Mon Site Pro"></div>
 </div>
 <div class="mb-16">
@@ -1599,9 +1615,9 @@ h+=`<div ${stepStyle}>
 <input id="geo-kw" placeholder="serrurier">
 </div>
 <div class="mb-16">
-<label>Texte source</label>
-<textarea id="geo-source-text" rows="5" placeholder="Collez ici le texte source pour la g\u00e9n\u00e9ration de contenu, ou laissez vide pour g\u00e9n\u00e9ration 100% IA..."></textarea>
-<div style="font-size:11px;color:var(--muted);margin-top:4px">Vous pouvez aussi pr\u00e9parer un fichier texte et le r\u00e9f\u00e9rencer c\u00f4t\u00e9 serveur.</div>
+<label>Texte source (HTML accept\u00e9)</label>
+<textarea id="geo-source-text" rows="5" placeholder="Collez ici le texte source (balises HTML accept\u00e9es : h2, h3, p, ul, li, strong, a...), ou laissez vide pour g\u00e9n\u00e9ration 100% IA \u00e0 partir du mot-cl\u00e9 et du brief..."></textarea>
+<div style="font-size:11px;color:var(--muted);margin-top:4px">Le contenu sera restructur\u00e9 en blocs SEO optimis\u00e9s (H2/H3, mots-cl\u00e9s en gras, FAQ, maillage interne) si \u00ab G\u00e9n\u00e9rer contenu IA \u00bb est coch\u00e9.</div>
 </div>
 <div style="margin-top:8px">
 <div ${stepHead} onclick="geoToggleStep('geo-brief-body',this)" style="padding:10px 16px;background:var(--card2);border-radius:8px;margin-bottom:0">
@@ -1699,7 +1715,7 @@ h+=`<div ${stepStyle}>
 </div>
 </div>
 <div id="geo-file-status"></div>
-<div id="geo-result"></div>
+<div id="geoloc-result"></div>
 </div></div>`;
 
 // --- STEP 5: Prévisualisation ---
@@ -1752,7 +1768,7 @@ else{selDepts.push(d);el.classList.add('on');}
 let _geoSiteId=null;
 let _geoDomainCached='';
 async function ensureGeoSite(){
-const domain=document.getElementById('geo-domain').value.trim();
+const domain=document.getElementById('geoloc-domain').value.trim();
 if(!domain)return null;
 // Reset si le domaine a changé
 if(domain!==_geoDomainCached){_geoSiteId=null;_geoDomainCached=domain;}
@@ -1777,8 +1793,9 @@ return{site_id:siteId,keyword_template:document.getElementById('geo-kw').value,m
 }
 
 function geoBuildFullBody(){
-const domain=document.getElementById('geo-domain').value.trim();
+const domain=document.getElementById('geoloc-domain').value.trim();
 const kw=document.getElementById('geo-kw').value.trim();
+const useConcurrence=document.getElementById('geo-concurrence').checked;
 const body={
 keyword_template:kw,
 site_name:document.getElementById('geo-sitename').value||domain,
@@ -1791,11 +1808,11 @@ min_population:Number(document.getElementById('geo-pop').value),
 use_divi:document.getElementById('geo-divi').checked,
 nb_variants:Number(document.getElementById('geo-variantes').value)||1,
 source_text:document.getElementById('geo-source-text').value||'',
-competitor_urls:[
+competitor_urls:useConcurrence?[
 document.getElementById('geo-brief-c1').value||'',
 document.getElementById('geo-brief-c2').value||'',
 document.getElementById('geo-brief-c3').value||''
-].filter(Boolean),
+].filter(Boolean):[],
 brief:{
 activite:document.getElementById('geo-brief-activite').value||'',
 services:document.getElementById('geo-brief-services').value||'',
@@ -1815,7 +1832,7 @@ return body;
 }
 
 async function previewGeoloc(){
-if(!document.getElementById('geo-domain').value||!document.getElementById('geo-kw').value)return;
+if(!document.getElementById('geoloc-domain').value||!document.getElementById('geo-kw').value)return;
 const siteId=await ensureGeoSite();
 if(!siteId){alert('Impossible de trouver/cr\u00e9er le site');return;}
 document.getElementById('geo-preview').innerHTML='';document.getElementById('geo-gen-btn').innerHTML='';
@@ -1832,11 +1849,13 @@ const step5=document.getElementById('geo-step5-body');
 if(step5&&step5.classList.contains('hidden')){step5.classList.remove('hidden');step5.style.display='';}
 }
 
+const GEO_STEP_LABELS={init:'Initialisation',analyze:'Analyse du texte source (Claude)',anchors:'G\u00e9n\u00e9ration des ancres de maillage',blocks:'Optimisation des blocs SEO',competitors:'Analyse concurrentielle',variants:'G\u00e9n\u00e9ration des variantes',assemble:'Assemblage des pages',saving:'Sauvegarde du fichier',done:'Termin\u00e9'};
+
 async function generateFile(){
-const domain=document.getElementById('geo-domain').value.trim();
+const domain=document.getElementById('geoloc-domain').value.trim();
 const kw=document.getElementById('geo-kw').value.trim();
 if(!domain||!kw){alert('Domaine et mot-cl\u00e9 requis');return;}
-const body=geoBuildFullBody();
+const useAI=document.getElementById('geo-ai-content').checked;
 const statusEl=document.getElementById('geo-file-status');
 const progressWrap=document.getElementById('geo-progress-wrap');
 const progressBar=document.getElementById('geo-progress-bar');
@@ -1848,23 +1867,43 @@ progressLabel.textContent='G\u00e9n\u00e9ration en cours...';
 progressCount.textContent='0/0';
 statusEl.innerHTML='';
 try{
-const res=await apiFetch('/geoloc/build-file',{method:'POST',body:JSON.stringify(body)});
+let res;
+if(useAI){
+// Pipeline avanc\u00e9 : analyse du texte source + blocs SEO + variantes + maillage (Claude)
+res=await apiFetch('/geoloc/build-file',{method:'POST',body:JSON.stringify(geoBuildFullBody())});
+}else{
+// G\u00e9n\u00e9ration rapide sans IA : structure + m\u00e9tadonn\u00e9es, contenu \u00e0 r\u00e9diger
+const full=geoBuildFullBody();
+res=await apiFetch('/geoloc/generate-file',{method:'POST',body:JSON.stringify({
+keyword_template:full.keyword_template,site_name:full.site_name,site_domain:full.site_domain,
+post_author:full.post_author,post_category:full.post_category,post_status:full.post_status,
+post_thumbnail:full.post_thumbnail,min_population:full.min_population,use_divi:full.use_divi,
+generate_content:false,
+...(full.regions&&{regions:full.regions}),...(full.departments&&{departments:full.departments}),
+})});
+}
 const fileKey=res.file_key;
 const total=res.total;
 progressCount.textContent=`0/${total}`;
 const poll=setInterval(async()=>{
 try{
 const st=await apiFetch('/geoloc/file-status/'+encodeURIComponent(fileKey));
+if(st.status==='error'){
+clearInterval(poll);
+progressLabel.textContent='Erreur';
+statusEl.innerHTML=`<div class="card" style="color:var(--danger);margin-top:8px"><b>\u00c9chec \u00e0 l'\u00e9tape \u00ab ${GEO_STEP_LABELS[st.step]||st.step||'?'} \u00bb</b><br>${st.error||'Erreur inconnue'}</div>`;
+return;
+}
 const pct=st.total>0?Math.round((st.done/st.total)*100):0;
 progressBar.style.width=pct+'%';
 progressCount.textContent=`${st.done}/${st.total}`;
-progressLabel.textContent=`G\u00e9n\u00e9ration : ${pct}%`;
+progressLabel.textContent=st.step&&st.step!=='done'?(GEO_STEP_LABELS[st.step]||st.step):`G\u00e9n\u00e9ration : ${pct}%`;
 if(st.status==='done'){
 clearInterval(poll);
 progressBar.style.width='100%';
 progressLabel.textContent='Termin\u00e9 !';
 progressCount.textContent=`${st.total}/${st.total}`;
-statusEl.innerHTML=`<div class="card result-box" style="margin-top:12px"><div class="result-msg">${total} pages g\u00e9n\u00e9r\u00e9es avec succ\u00e8s</div><div style="margin-top:10px"><a href="/geoloc/download/${encodeURIComponent(fileKey)}" class="btn" style="text-decoration:none;display:inline-block;background:var(--success)">T\u00e9l\u00e9charger le fichier Excel</a></div></div>`;
+statusEl.innerHTML=`<div class="card result-box" style="margin-top:12px"><div class="result-msg">${total} pages g\u00e9n\u00e9r\u00e9es avec succ\u00e8s</div><div style="margin-top:10px"><button class="btn" style="background:var(--success)" onclick="downloadGeoFile('${fileKey.replace(/'/g,"\\'")}')">T\u00e9l\u00e9charger le fichier Excel</button></div></div>`;
 }
 }catch(e){clearInterval(poll);progressLabel.textContent='Erreur';statusEl.innerHTML=`<div class="card" style="color:var(--danger);margin-top:8px">${e.message}</div>`;}
 },2000);
@@ -1875,8 +1914,8 @@ async function generateGeoloc(){
 const siteId=await ensureGeoSite();
 if(!siteId)return;
 try{const res=await apiFetch('/geoloc/generate',{method:'POST',body:JSON.stringify(geoBody(siteId))});
-document.getElementById('geo-result').innerHTML=`<div class="card result-box"><div class="result-msg">${res.message}</div><div class="result-sub">Visible dans la file de validation (Overview)</div></div>`;
-}catch(e){document.getElementById('geo-result').innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;}
+document.getElementById('geoloc-result').innerHTML=`<div class="card result-box"><div class="result-msg">${res.message}</div><div class="result-sub">Visible dans la file de validation (Overview)</div></div>`;
+}catch(e){document.getElementById('geoloc-result').innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;}
 }
 
 // SETTINGS

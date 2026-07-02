@@ -289,7 +289,9 @@ CONSIGNES :
 - BLOC_FAQ : 5 questions/reponses avec H3 pour chaque question
 - Ancres sous forme de <a href="__LIEN__">ancre</a>
 - __VILLE__ present dans chaque bloc au moins une fois
-- HTML propre : h2, h3, p, ul, li, a — pas de markdown
+- Mets en gras avec <strong> le mot-cle principal (2-3 occurrences par bloc, jamais dans les H2/H3)
+- Mets en gras avec <strong> les variantes semantiques importantes (1 occurrence chacune)
+- HTML propre : h2, h3, p, ul, li, a, strong — pas de markdown
 - Contenu expert avec des donnees concretes
 
 Reponds uniquement avec le JSON."""
@@ -330,6 +332,7 @@ CONSIGNES :
 - Conserve exactement la meme structure HTML (memes H2, H3)
 - Modifie au moins 60 % du texte : reformulations, synonymes, exemples differents
 - Garde les ancres de liens (<a>) intactes
+- Conserve les mises en gras <strong> du mot-cle principal et de ses variantes (repositionne-les naturellement)
 - Garde __VILLE__ comme placeholder
 - La variante {i + 1} doit etre significativement differente des precedentes
 - Retourne le JSON avec les memes cles (BLOC_INTRO, BLOC_H2_1 .. BLOC_H2_4, BLOC_FAQ)

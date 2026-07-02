@@ -57,8 +57,12 @@ class WPInstaller:
         conn.close()
         self.log("Reset complet.")
 
-    def install_wordpress(self) -> dict:
-        """Télécharge et installe WordPress"""
+    def install_wordpress(self, admin_password: str | None = None) -> dict:
+        """Télécharge et installe WordPress.
+
+        Si *admin_password* est fourni, il est utilisé pour le compte admin ;
+        sinon un mot de passe aléatoire est généré.
+        """
         self.log("Téléchargement de WordPress...")
         resp = httpx.get(self.WP_DOWNLOAD_URL, follow_redirects=True, timeout=60)
         resp.raise_for_status()
@@ -87,7 +91,7 @@ class WPInstaller:
         self.log(f"{uploaded} fichiers uploadés.")
 
         # Créer wp-config.php
-        admin_password = self._random_password()
+        admin_password = admin_password or self._random_password()
         wp_config = self._generate_wp_config()
         ftp.storbinary("STOR wp-config.php", io.BytesIO(wp_config.encode()))
         ftp.quit()
@@ -140,33 +144,50 @@ require_once ABSPATH . 'wp-settings.php';
 """
 
     def _setup_database(self, admin_password: str):
-        """Crée les tables WP et l'admin"""
-        conn = self._db_connect()
-        cursor = conn.cursor()
+        """Lance l'installation WP via install.php et vérifie qu'elle a réussi."""
+        # Vérification de la connectivité MySQL avant de lancer install.php :
+        # si la BDD est inaccessible depuis ici, install.php échouera aussi.
+        try:
+            conn = self._db_connect()
+            conn.close()
+            self.log("Connexion MySQL OK.")
+        except Exception as e:
+            raise RuntimeError(f"Connexion MySQL impossible ({e}) — vérifie host/user/password/database") from e
 
         username = self.site.wp_username or "admin"
         email = f"admin@{self.site.domain}"
         site_title = self.site.name
         site_url = f"https://{self.site.domain}"
 
-        # Créer les tables via wp-admin/install.php serait mieux,
-        # mais on peut aussi installer programmatiquement via l'URL
         install_url = f"{site_url}/wp-admin/install.php?step=2"
         try:
-            httpx.post(install_url, data={
+            resp = httpx.post(install_url, data={
                 "weblog_title": site_title,
                 "user_name": username,
                 "admin_password": admin_password,
                 "admin_password2": admin_password,
                 "admin_email": email,
                 "blog_public": "0",  # pas d'indexation immédiate
-            }, timeout=30, follow_redirects=True)
-            self.log("Installation WP via install.php terminée.")
+            }, timeout=60, follow_redirects=True)
         except Exception as e:
-            self.log(f"Install via URL échoué ({e}), tentative manuelle...")
+            raise RuntimeError(f"Installation via install.php impossible ({e}) — le domaine pointe-t-il vers le serveur ?") from e
 
-        cursor.close()
-        conn.close()
+        body = resp.text.lower()
+        if resp.status_code >= 400:
+            raise RuntimeError(f"install.php a répondu HTTP {resp.status_code} — installation non effectuée")
+        if "already installed" in body or "déjà installé" in body:
+            raise RuntimeError("WordPress est déjà installé (tables existantes) — utilise l'option reset pour repartir de zéro")
+
+        # Vérification finale : wp-login.php doit répondre
+        try:
+            check = httpx.get(f"{site_url}/wp-login.php", timeout=30, follow_redirects=True)
+            if check.status_code >= 400:
+                raise RuntimeError(f"wp-login.php répond HTTP {check.status_code}")
+            self.log("Installation WP vérifiée (wp-login.php accessible).")
+        except RuntimeError:
+            raise
+        except Exception as e:
+            self.log(f"WARN: vérification wp-login.php impossible ({e}) — l'installation semble terminée mais n'a pas pu être confirmée")
 
     def _random_password(self, length: int = 16) -> str:
         chars = string.ascii_letters + string.digits + "!@#$%"

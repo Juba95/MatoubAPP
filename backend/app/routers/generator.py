@@ -184,54 +184,75 @@ def full_install(
 
     _pipeline_logs[key] = {"step": "init", "logs": ["Pipeline demarre..."], "done": False, "error": None}
 
+    # Normaliser le domaine (le pipeline attend une URL complète)
+    domain = req.domain.strip().rstrip("/")
+    if not domain.startswith(("http://", "https://")):
+        domain = f"https://{domain}"
+
+    # Mapping FullInstallRequest → schéma de config attendu par WPGeneratorPipeline.run()
+    config = {
+        "domain": domain,
+        "site_name": req.site_title,
+        "ftp_host": req.ftp_host,
+        "ftp_user": req.ftp_user,
+        "ftp_pass": req.ftp_pass,
+        "ftp_root": req.ftp_root,
+        "db_host": req.db_host,
+        "db_name": req.db_name,
+        "db_user": req.db_user,
+        "db_pass": req.db_pass,
+        "admin_user": req.admin_user,
+        "wp_username": req.admin_user,
+        "site_prompt": req.site_prompt,
+        "mode": "divi" if req.use_divi else "custom",
+        "reset": req.reset_first,
+        "install_wp": True,
+        "install_divi": req.use_divi,
+        "et_username": req.et_username,
+        "et_api_key": req.et_api_key,
+        "scrape_archive": req.use_webarchive,
+        "competitor_urls": req.competitor_urls if req.generation_mode == "concurrent" else [],
+        "eat": {
+            "enabled": req.eat_enabled,
+            "name": req.business_name,
+            "address": req.business_address,
+            "phone": req.business_phone,
+            "email": req.business_email,
+            "lat": req.business_lat,
+            "lng": req.business_lng,
+            "hours": req.business_hours,
+            "faq": req.eat_faq,
+            "reviews": req.eat_reviews,
+            "hours_block": req.eat_hours,
+            "map": req.eat_map,
+            "reassurance": req.eat_reassurance,
+            "how_it_works": req.eat_how_it_works,
+        },
+    }
+    if req.admin_pass:
+        config["admin_pass"] = req.admin_pass
+
     def run_pipeline():
         log = _log_for_pipeline(key)
         try:
             from app.services.wp_generator import WPGeneratorPipeline
 
-            pipeline = WPGeneratorPipeline(
-                domain=req.domain,
-                site_title=req.site_title,
-                admin_user=req.admin_user,
-                admin_email=req.admin_email,
-                admin_pass=req.admin_pass,
-                ftp_host=req.ftp_host,
-                ftp_user=req.ftp_user,
-                ftp_pass=req.ftp_pass,
-                ftp_root=req.ftp_root,
-                db_host=req.db_host,
-                db_name=req.db_name,
-                db_user=req.db_user,
-                db_pass=req.db_pass,
-                db_prefix=req.db_prefix,
-                reset_first=req.reset_first,
-                use_divi=req.use_divi,
-                et_username=req.et_username,
-                et_api_key=req.et_api_key,
-                generation_mode=req.generation_mode,
-                site_prompt=req.site_prompt,
-                competitor_urls=req.competitor_urls,
-                use_webarchive=req.use_webarchive,
-                eat_enabled=req.eat_enabled,
-                business_name=req.business_name,
-                business_address=req.business_address,
-                business_phone=req.business_phone,
-                business_email=req.business_email,
-                business_lat=req.business_lat,
-                business_lng=req.business_lng,
-                business_hours=req.business_hours,
-                eat_faq=req.eat_faq,
-                eat_reviews=req.eat_reviews,
-                eat_hours=req.eat_hours,
-                eat_map=req.eat_map,
-                eat_reassurance=req.eat_reassurance,
-                eat_how_it_works=req.eat_how_it_works,
-                log_callback=log,
-            )
-            pipeline.run()
-            log("SUCCESS: Pipeline termine avec succes")
+            pipeline = WPGeneratorPipeline()
+            result = pipeline.run(config, log_callback=log)
+
+            errors = result.get("errors", [])
+            for err in errors:
+                log(f"ERREUR étape « {err.get('step', '?')} » : {err.get('error', '')}")
+
             _pipeline_logs[key]["done"] = True
-            _pipeline_logs[key]["step"] = "done"
+            if errors:
+                summary = "; ".join(f"{e.get('step', '?')}: {e.get('error', '')}" for e in errors)
+                _pipeline_logs[key]["error"] = summary
+                log(f"TERMINE AVEC ERREURS: {len(result.get('steps_completed', []))} étapes OK, {len(errors)} en échec")
+            else:
+                _pipeline_logs[key]["step"] = "done"
+                log(f"SUCCESS: Pipeline terminé — {len(result.get('steps_completed', []))} étapes, "
+                    f"{len(result.get('pages_created', []))} pages créées — {result.get('admin_url', '')}")
         except ImportError:
             log("ERROR: Module app.services.wp_generator non disponible")
             _pipeline_logs[key]["done"] = True

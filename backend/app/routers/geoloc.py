@@ -13,7 +13,7 @@ from app.database import get_db
 from app.auth import get_current_user
 from app.models.action import Action, ActionType, ActionStatus
 from app.models.site import Site
-from app.services.geoloc_engine import GeolocEngine
+from app.services.geoloc_engine import GeolocEngine, slugify
 
 logger = logging.getLogger(__name__)
 
@@ -159,10 +159,10 @@ def preview_geoloc(req: GeolocRequest, db: Session = Depends(get_db)):
     for v in villes:
         if "{ville}" in req.keyword_template:
             keyword = req.keyword_template.replace("{ville}", v["name"])
-            slug = req.keyword_template.replace("{ville}", v["slug"]).replace(" ", "-").lower()
+            slug = slugify(req.keyword_template.replace("{ville}", v["slug"]))
         else:
             keyword = f"{req.keyword_template} {v['name']}"
-            slug = f"{req.keyword_template.replace(' ', '-').lower()}-{v['slug']}"
+            slug = f"{slugify(req.keyword_template)}-{v['slug']}"
         pages.append({
             "keyword": keyword,
             "slug": slug,
@@ -268,7 +268,9 @@ _generated_files: dict[str, dict] = {}
 def generate_file(req: GeolocFileRequest, background_tasks: BackgroundTasks):
     """Génère un fichier Excel d'import WP avec toutes les pages géolocalisées."""
     villes = load_villes(req.departments, req.regions, req.min_population)
-    file_key = f"{req.site_domain}_{req.keyword_template}_{len(villes)}"
+    if not villes:
+        raise HTTPException(status_code=400, detail="Aucune ville ne correspond aux filtres")
+    file_key = f"{req.site_domain}_{req.keyword_template}_{len(villes)}_{datetime.now().strftime('%H%M%S')}"
     _generated_files[file_key] = {"status": "running", "total": len(villes), "done": 0}
 
     def run():
@@ -310,10 +312,10 @@ def generate_file(req: GeolocFileRequest, background_tasks: BackgroundTasks):
             # Keyword avec ville
             if "{ville}" in req.keyword_template:
                 kw = req.keyword_template.replace("{ville}", v["name"])
-                slug_kw = req.keyword_template.replace("{ville}", v["slug"]).replace(" ", "-").lower()
+                slug_kw = slugify(req.keyword_template.replace("{ville}", v["slug"]))
             else:
                 kw = f"{req.keyword_template} {v['name']}"
-                slug_kw = f"{req.keyword_template.replace(' ', '-').lower()}-{v['slug']}"
+                slug_kw = f"{slugify(req.keyword_template)}-{v['slug']}"
 
             title = f"{kw.title()} | {req.site_name}"
             h1 = kw.title()
@@ -412,7 +414,13 @@ def file_status(file_key: str):
     data = _generated_files.get(file_key)
     if not data:
         raise HTTPException(status_code=404, detail="Fichier non trouvé")
-    return {"status": data["status"], "total": data.get("total", 0), "done": data.get("done", 0)}
+    return {
+        "status": data["status"],
+        "total": data.get("total", 0),
+        "done": data.get("done", 0),
+        "step": data.get("step", ""),
+        "error": data.get("error", ""),
+    }
 
 
 @router.get("/download/{file_key}")
@@ -461,7 +469,8 @@ class VariantsRequest(BaseModel):
 
 
 class FullPipelineRequest(BaseModel):
-    source_text: str
+    source_text: str = ""
+    keyword_template: str = ""
     brief: dict = {}
     site_name: str
     site_domain: str
@@ -563,9 +572,21 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
         state = _generated_files[file_key]
 
         try:
+            # Texte source : si vide, on synthétise un brief pour la génération 100% IA
+            brief = dict(req.brief or {})
+            if req.keyword_template and "keyword" not in brief:
+                brief["keyword"] = req.keyword_template
+            source_text = req.source_text.strip()
+            if not source_text:
+                source_text = (
+                    f"Rédige un contenu expert et commercial pour le mot-clé « {req.keyword_template} ». "
+                    f"Activité : {brief.get('activite', '')}. Services : {brief.get('services', '')}. "
+                    f"Attentes clients : {brief.get('mots_clients', '')}."
+                )
+
             # --- Step 1: Analyze source text ---
             state["step"] = "analyze"
-            ctx = engine.analyze_source(req.source_text, req.brief or None)
+            ctx = engine.analyze_source(source_text, brief)
 
             # --- Step 2: Generate anchors ---
             state["step"] = "anchors"
@@ -573,7 +594,7 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
 
             # --- Step 3: Optimize blocks ---
             state["step"] = "blocks"
-            blocs = engine.optimize_blocks(req.source_text, ctx, anchors)
+            blocs = engine.optimize_blocks(source_text, ctx, anchors)
 
             # --- Step 4: Analyze competitors (if URLs provided) ---
             competitor_data = None
@@ -604,35 +625,58 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                 headers.extend(["_et_pb_use_builder", "_et_pb_old_content"])
             ws.append(headers)
 
-            today = datetime.now().strftime("%Y-%m-%d")
-            keyword = ctx.get("keyword", req.source_text[:30])
-            slug_base = ctx.get("slug_base", keyword.replace(" ", "-").lower())
-            title_tpl = ctx.get("title_template", f"{keyword} {{ville}} | {req.site_name}")
-            h1_tpl = ctx.get("h1_template", f"{keyword} {{ville}}")
-            meta_tpl = ctx.get(
-                "meta_desc_template",
-                f"{keyword} à {{ville}} ({{departement}}). Intervention rapide. Devis gratuit.",
+            from datetime import timedelta
+
+            base_date = datetime.now()
+            keyword = ctx.get("keyword") or req.keyword_template or source_text[:30]
+            slug_base = slugify(ctx.get("slug_base") or keyword)
+            # analyze_source renvoie template_title / template_h1 / template_meta avec __VILLE__
+            title_tpl = ctx.get("template_title") or f"{keyword.title()} __VILLE__ | {req.site_name}"
+            h1_tpl = ctx.get("template_h1") or f"{keyword.title()} __VILLE__"
+            meta_tpl = ctx.get("template_meta") or (
+                f"{keyword.capitalize()} à __VILLE__ ({{departement}}). Intervention rapide. Devis gratuit."
             )
+
+            # Le moteur (maillage/assemblage) attend les clés nom/slug/lat/lon
+            villes_engine = [
+                {
+                    "nom": v["name"],
+                    "slug": v["slug"],
+                    "lat": v["lat"],
+                    "lon": v["lng"],
+                    "population": v["population"],
+                }
+                for v in villes
+            ]
 
             for i, v in enumerate(villes):
                 # Rotate variants
                 variant = variants[i % len(variants)]
 
+                # Maillage interne : liens vers les 8 villes les plus proches
+                maillage = engine.generate_maillage(
+                    ville=v["name"],
+                    all_villes=villes_engine,
+                    slug_base=slug_base,
+                    anchors=anchors,
+                    nb=8,
+                )
+
                 # Assemble content
                 content = engine.assemble_page(
-                    variant=variant,
-                    city=v,
-                    anchors=anchors,
-                    all_cities=villes,
+                    blocs=variant,
+                    ville=villes_engine[i],
                     ctx=ctx,
-                    site_domain=req.site_domain,
+                    maillage=maillage,
+                    variant_idx=i % len(variants),
                     use_divi=req.use_divi,
                     images=req.images,
                     colors=req.colors,
                 )
 
-                # Build metadata
+                # Build metadata — supporte __VILLE__ (moteur) et {ville} (legacy)
                 replacements = {
+                    "__VILLE__": v["name"],
                     "{ville}": v["name"],
                     "{departement}": v["department"],
                     "{region}": v.get("region", ""),
@@ -649,6 +693,8 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                 meta_desc = _replace(meta_tpl)
                 slug = f"{slug_base}-{v['slug']}"
                 tags = f"{keyword},{v['name'].lower()},{v['department']}"
+                # Dates étalées (+1 jour par ville) pour éviter un footprint de publication massive
+                today = (base_date + timedelta(days=i)).strftime("%Y-%m-%d")
 
                 row = [
                     v["name"], slug, title, h1, meta_desc,
