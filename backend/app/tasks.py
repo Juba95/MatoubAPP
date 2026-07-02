@@ -84,8 +84,11 @@ def execute_action(self, action_id: int):
     db = SessionLocal()
     try:
         action = db.query(Action).filter(Action.id == action_id).first()
-        if not action or action.status != ActionStatus.VALIDATED:
-            return {"skipped": True, "reason": "not found or not validated"}
+        # Accepter VALIDATED (cas normal) mais aussi EXECUTING/FAILED : lors d'un
+        # retry Celery, l'action n'est plus VALIDATED — l'ancien garde-fou
+        # court-circuitait tous les retries (échec définitif au 1er incident).
+        if not action or action.status in (ActionStatus.DONE, ActionStatus.REJECTED, ActionStatus.PENDING):
+            return {"skipped": True, "reason": "not found or not executable"}
 
         action.status = ActionStatus.EXECUTING
         db.commit()
@@ -101,6 +104,29 @@ def execute_action(self, action_id: int):
         proxy_url = site_config.proxy_url if site_config else None
 
         claude = ClaudeContentService()
+        publisher = WPPublisher(site, proxy_url=proxy_url)
+
+        # ── OPTIMIZE : retrouver la page WordPress à mettre à jour ─────────
+        # Via page_id si le lien BDD existe, sinon par slug depuis l'URL
+        # contenue dans la description (même logique que le mode sync).
+        wp_post_id = None
+        wp_type = "post"
+        if action.action_type == ActionType.OPTIMIZE:
+            if action.page_id and action.page and action.page.wp_post_id:
+                wp_post_id = action.page.wp_post_id
+            elif action.description and "Page: " in action.description:
+                import re as _re
+                m = _re.search(r"Page:\s*(https?://[^\s]+)", action.description)
+                if m:
+                    slug = m.group(1).rstrip("/").split("/")[-1]
+                    if slug:
+                        try:
+                            found = publisher.find_post_by_slug(slug)
+                        except Exception:
+                            found = None
+                        if found:
+                            wp_post_id = found["wp_post_id"]
+                            wp_type = found.get("type", "post")
 
         # ── Génération du contenu ──────────────────────────────────────────
         if action.action_type == ActionType.GEOLOC:
@@ -114,16 +140,26 @@ def execute_action(self, action_id: int):
                 region=extra.get("region", ""),
             )
 
-        elif action.action_type == ActionType.OPTIMIZE and action.page_id and action.page:
-            page_obj = action.page
-            result = claude.optimize_page(
-                site,
-                keyword=action.keyword,
-                current_content=page_obj.content or "",
-                current_position=action.current_position or 0,
-            )
+        elif action.action_type == ActionType.OPTIMIZE and wp_post_id:
+            current_content = ""
+            if action.page_id and action.page:
+                current_content = action.page.content or ""
+            if not current_content:
+                try:
+                    current_content = publisher.get_content(wp_post_id, wp_type)
+                except Exception:
+                    current_content = ""
+            if current_content and len(current_content) >= 50:
+                result = claude.optimize_page(
+                    site,
+                    keyword=action.keyword,
+                    current_content=current_content,
+                    current_position=action.current_position or 0,
+                )
+            else:
+                result = claude.generate_article(site, action.keyword)
 
-        else:  # CREATE
+        else:  # CREATE (ou OPTIMIZE sans page retrouvée → nouveau brouillon)
             result = claude.generate_article(site, action.keyword)
 
         # ── Parser le JSON retourné par Claude ─────────────────────────────
@@ -144,21 +180,28 @@ def execute_action(self, action_id: int):
         action.generated_meta_description = content_data.get("meta_description", "")
 
         # ── Publication WordPress ──────────────────────────────────────────
-        publisher = WPPublisher(site, proxy_url=proxy_url)
-
-        if action.action_type == ActionType.OPTIMIZE and action.page_id and action.page.wp_post_id:
-            wp_result = publisher.update_post(
-                post_id=action.page.wp_post_id,
-                title=content_data.get("title", action.title),
-                content=action.generated_content,
-                meta_title=action.generated_meta_title,
-                meta_description=action.generated_meta_description,
-            )
-            page_obj = action.page
-            page_obj.content = action.generated_content
-            page_obj.meta_title = action.generated_meta_title
-            page_obj.meta_description = action.generated_meta_description
-            page_obj.status = PageStatus.UPDATED
+        if action.action_type == ActionType.OPTIMIZE and wp_post_id:
+            if wp_type == "page":
+                wp_result = publisher.update_page(
+                    page_id=wp_post_id,
+                    content=action.generated_content,
+                    meta_title=action.generated_meta_title,
+                    meta_description=action.generated_meta_description,
+                )
+            else:
+                wp_result = publisher.update_post(
+                    post_id=wp_post_id,
+                    title=content_data.get("title", action.title),
+                    content=action.generated_content,
+                    meta_title=action.generated_meta_title,
+                    meta_description=action.generated_meta_description,
+                )
+            if action.page_id and action.page:
+                page_obj = action.page
+                page_obj.content = action.generated_content
+                page_obj.meta_title = action.generated_meta_title
+                page_obj.meta_description = action.generated_meta_description
+                page_obj.status = PageStatus.UPDATED
 
         else:
             wp_result = publisher.create_post(
@@ -196,10 +239,13 @@ def execute_action(self, action_id: int):
         return {"action_id": action_id, "wp_post_id": wp_result.get("wp_post_id")}
 
     except Exception as exc:
-        # Marquer l'action comme échouée avant le retry
+        # Ne marquer FAILED qu'une fois les retries épuisés : l'ancien code
+        # passait FAILED avant self.retry(), et le garde-fou d'entrée
+        # court-circuitait alors toutes les tentatives suivantes.
+        exhausted = self.request.retries >= self.max_retries
         try:
             db.query(Action).filter(Action.id == action_id).update(
-                {"status": ActionStatus.FAILED}
+                {"status": ActionStatus.FAILED if exhausted else ActionStatus.EXECUTING}
             )
             db.commit()
         except Exception:

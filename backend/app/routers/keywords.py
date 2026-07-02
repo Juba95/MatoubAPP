@@ -35,7 +35,7 @@ def _serialize_keyword(kw: Keyword) -> dict:
 @router.get("/{site_id}")
 def list_keywords(
     site_id: int,
-    sort_by: str = Query("position", regex="^(position|volume|impressions)$"),
+    sort_by: str = Query("position", pattern="^(position|volume|impressions)$"),
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
 ):

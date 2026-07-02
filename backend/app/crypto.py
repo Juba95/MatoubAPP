@@ -33,8 +33,19 @@ def decrypt(value: str) -> str:
         return value
     try:
         return f.decrypt(value.encode()).decode()
-    except (InvalidToken, Exception):
-        # Donnée non chiffrée (legacy) — on la retourne telle quelle
+    except InvalidToken:
+        # Donnée non chiffrée (legacy) — on la retourne telle quelle.
+        # ATTENTION : si ENCRYPTION_KEY a changé, on retombe aussi ici et le
+        # ciphertext est renvoyé tel quel → connexions WP/GSC incompréhensiblement
+        # cassées. Le préfixe Fernet permet de distinguer les deux cas.
+        if value.startswith("gAAAA"):
+            import logging
+            logging.getLogger(__name__).warning(
+                "Déchiffrement impossible d'une valeur chiffrée — "
+                "ENCRYPTION_KEY a probablement changé"
+            )
+        return value
+    except Exception:
         return value
 
 

@@ -63,6 +63,85 @@ DEPT_TO_REGION = {
 }
 
 
+# Nom officiel de chaque département (pour les pages de type « Département »)
+DEPT_NAMES = {
+    "01": "Ain", "02": "Aisne", "03": "Allier", "04": "Alpes-de-Haute-Provence",
+    "05": "Hautes-Alpes", "06": "Alpes-Maritimes", "07": "Ardèche", "08": "Ardennes",
+    "09": "Ariège", "10": "Aube", "11": "Aude", "12": "Aveyron",
+    "13": "Bouches-du-Rhône", "14": "Calvados", "15": "Cantal", "16": "Charente",
+    "17": "Charente-Maritime", "18": "Cher", "19": "Corrèze", "2A": "Corse-du-Sud",
+    "2B": "Haute-Corse", "21": "Côte-d'Or", "22": "Côtes-d'Armor", "23": "Creuse",
+    "24": "Dordogne", "25": "Doubs", "26": "Drôme", "27": "Eure",
+    "28": "Eure-et-Loir", "29": "Finistère", "30": "Gard", "31": "Haute-Garonne",
+    "32": "Gers", "33": "Gironde", "34": "Hérault", "35": "Ille-et-Vilaine",
+    "36": "Indre", "37": "Indre-et-Loire", "38": "Isère", "39": "Jura",
+    "40": "Landes", "41": "Loir-et-Cher", "42": "Loire", "43": "Haute-Loire",
+    "44": "Loire-Atlantique", "45": "Loiret", "46": "Lot", "47": "Lot-et-Garonne",
+    "48": "Lozère", "49": "Maine-et-Loire", "50": "Manche", "51": "Marne",
+    "52": "Haute-Marne", "53": "Mayenne", "54": "Meurthe-et-Moselle", "55": "Meuse",
+    "56": "Morbihan", "57": "Moselle", "58": "Nièvre", "59": "Nord",
+    "60": "Oise", "61": "Orne", "62": "Pas-de-Calais", "63": "Puy-de-Dôme",
+    "64": "Pyrénées-Atlantiques", "65": "Hautes-Pyrénées", "66": "Pyrénées-Orientales",
+    "67": "Bas-Rhin", "68": "Haut-Rhin", "69": "Rhône", "70": "Haute-Saône",
+    "71": "Saône-et-Loire", "72": "Sarthe", "73": "Savoie", "74": "Haute-Savoie",
+    "75": "Paris", "76": "Seine-Maritime", "77": "Seine-et-Marne", "78": "Yvelines",
+    "79": "Deux-Sèvres", "80": "Somme", "81": "Tarn", "82": "Tarn-et-Garonne",
+    "83": "Var", "84": "Vaucluse", "85": "Vendée", "86": "Vienne",
+    "87": "Haute-Vienne", "88": "Vosges", "89": "Yonne", "90": "Territoire de Belfort",
+    "91": "Essonne", "92": "Hauts-de-Seine", "93": "Seine-Saint-Denis",
+    "94": "Val-de-Marne", "95": "Val-d'Oise",
+}
+
+# Limite Excel : 32 767 caractères par cellule. Au-delà, le fichier de sortie
+# serait tronqué brutalement par Excel (shortcodes Divi cassés).
+EXCEL_CELL_LIMIT = 32767
+
+
+def safe_cell(text: str) -> str:
+    """Tronque proprement un contenu à la limite d'une cellule Excel."""
+    if not isinstance(text, str) or len(text) <= EXCEL_CELL_LIMIT:
+        return text
+    cut = text[:EXCEL_CELL_LIMIT - 20]
+    # Couper à la fin du dernier shortcode/balise complet pour ne pas casser le rendu
+    boundary = max(cut.rfind("]"), cut.rfind(">"))
+    if boundary > 0:
+        cut = cut[:boundary + 1]
+    logger.warning("Contenu tronqué à la limite Excel (%d caractères)", EXCEL_CELL_LIMIT)
+    return cut
+
+
+def build_department_rows(
+    departments: list[str] | None,
+    regions: list[str] | None,
+) -> list[dict]:
+    """Construit une pseudo-ville par département sélectionné (Type=Département).
+
+    Population = somme des communes du département ; coordonnées = celles de
+    la commune la plus peuplée (pour le maillage par proximité).
+    """
+    all_communes = load_villes(departments, regions, 0)
+    by_dept: dict[str, list[dict]] = {}
+    for v in all_communes:
+        by_dept.setdefault(v["department"], []).append(v)
+
+    rows = []
+    for dept, communes in by_dept.items():
+        name = DEPT_NAMES.get(dept, dept)
+        biggest = max(communes, key=lambda c: c["population"])
+        rows.append({
+            "name": name,
+            "slug": slugify(name),
+            "department": dept,
+            "postal_code": "",
+            "population": sum(c["population"] for c in communes),
+            "region": communes[0]["region"],
+            "lat": biggest["lat"],
+            "lng": biggest["lng"],
+            "type": "Département",
+        })
+    return sorted(rows, key=lambda r: r["population"], reverse=True)
+
+
 def load_villes(
     departments: list[str] | None = None,
     regions: list[str] | None = None,
@@ -258,6 +337,7 @@ class GeolocFileRequest(BaseModel):
     min_population: int = 5000
     use_divi: bool = False
     generate_content: bool = False  # Si True, génère le contenu via Claude (lent + coûteux)
+    include_departments: bool = False  # Ajoute une page par département (Type=Département)
 
 
 # Cache des fichiers générés
@@ -268,6 +348,8 @@ _generated_files: dict[str, dict] = {}
 def generate_file(req: GeolocFileRequest, background_tasks: BackgroundTasks):
     """Génère un fichier Excel d'import WP avec toutes les pages géolocalisées."""
     villes = load_villes(req.departments, req.regions, req.min_population)
+    if req.include_departments:
+        villes = build_department_rows(req.departments, req.regions) + villes
     if not villes:
         raise HTTPException(status_code=400, detail="Aucune ville ne correspond aux filtres")
     file_key = f"{req.site_domain}_{req.keyword_template}_{len(villes)}_{datetime.now().strftime('%H%M%S')}"
@@ -377,16 +459,16 @@ def generate_file(req: GeolocFileRequest, background_tasks: BackgroundTasks):
                 )
                 row = [
                     v["name"], slug_kw, title, h1, meta_desc,
-                    divi_content, req.post_thumbnail, today, req.post_author,
+                    safe_cell(divi_content), req.post_thumbnail, today, req.post_author,
                     req.post_category, tags, req.post_status,
-                    v["population"], "Ville", "on", "",
+                    v["population"], v.get("type", "Ville"), "on", "",
                 ]
             else:
                 row = [
                     v["name"], slug_kw, title, h1, meta_desc,
-                    content, req.post_thumbnail, today, req.post_author,
+                    safe_cell(content), req.post_thumbnail, today, req.post_author,
                     req.post_category, tags, req.post_status,
-                    v["population"], "Ville",
+                    v["population"], v.get("type", "Ville"),
                 ]
 
             ws.append(row)
@@ -486,6 +568,8 @@ class FullPipelineRequest(BaseModel):
     nb_variants: int = 3
     competitor_urls: list[str] = []
     colors: dict = {}
+    video_url: str = ""              # URL vidéo (YouTube/Vimeo) insérée dans chaque page
+    include_departments: bool = False  # Ajoute une page par département (Type=Département)
 
 
 @router.post("/analyze-source")
@@ -554,6 +638,8 @@ def generate_variants(req: VariantsRequest):
 def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
     """Full pipeline: analyze, generate blocks/anchors/variants, assemble all city pages, build Excel."""
     villes = load_villes(req.departments, req.regions, req.min_population)
+    if req.include_departments:
+        villes = build_department_rows(req.departments, req.regions) + villes
     if not villes:
         raise HTTPException(status_code=400, detail="Aucune ville ne correspond aux filtres")
 
@@ -595,6 +681,11 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
             # --- Step 3: Optimize blocks ---
             state["step"] = "blocks"
             blocs = engine.optimize_blocks(source_text, ctx, anchors)
+            # Les avis clients sont extraits : ils ne passent pas par les variantes
+            # (rotation par ville pour l'unicité, cf. assemble_page)
+            avis = blocs.pop("BLOC_AVIS", [])
+            if not isinstance(avis, list):
+                avis = []
 
             # --- Step 4: Analyze competitors (if URLs provided) ---
             competitor_data = None
@@ -645,6 +736,10 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                     "lat": v["lat"],
                     "lon": v["lng"],
                     "population": v["population"],
+                    "zone_label": (
+                        v["name"] if v.get("type") != "Département"
+                        else f"{v['name']} et ses communes"
+                    ),
                 }
                 for v in villes
             ]
@@ -662,16 +757,25 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                     nb=8,
                 )
 
+                # Métadonnées d'abord (le H1 est intégré en tête de contenu)
+                replacements_pre = {"__VILLE__": v["name"], "{ville}": v["name"]}
+                h1_page = h1_tpl
+                for ph, val in replacements_pre.items():
+                    h1_page = h1_page.replace(ph, val)
+
                 # Assemble content
                 content = engine.assemble_page(
                     blocs=variant,
                     ville=villes_engine[i],
                     ctx=ctx,
                     maillage=maillage,
-                    variant_idx=i % len(variants),
+                    variant_idx=i,
                     use_divi=req.use_divi,
                     images=req.images,
                     colors=req.colors,
+                    h1=h1_page,
+                    video_url=req.video_url,
+                    avis=avis,
                 )
 
                 # Build metadata — supporte __VILLE__ (moteur) et {ville} (legacy)
@@ -698,9 +802,9 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
 
                 row = [
                     v["name"], slug, title, h1, meta_desc,
-                    content, req.post_thumbnail, today, req.post_author,
+                    safe_cell(content), req.post_thumbnail, today, req.post_author,
                     req.post_category, tags, req.post_status,
-                    v["population"], "Ville",
+                    v["population"], v.get("type", "Ville"),
                 ]
                 if req.use_divi:
                     row.extend(["on", ""])

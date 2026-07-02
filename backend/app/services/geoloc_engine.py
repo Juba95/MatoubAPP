@@ -281,12 +281,14 @@ STRUCTURE ATTENDUE (JSON) :
   "BLOC_H2_2": "<h2>Titre section 2 a __VILLE__</h2><h3>...</h3><p>...</p>...",
   "BLOC_H2_3": "<h2>Titre section 3 a __VILLE__</h2><h3>...</h3><p>...</p>...",
   "BLOC_H2_4": "<h2>Titre section 4 a __VILLE__</h2><h3>...</h3><p>...</p>...",
-  "BLOC_FAQ": "<h2>Questions frequentes sur ... a __VILLE__</h2><h3>Q1 ?</h3><p>R1</p>..."
+  "BLOC_FAQ": "<h2>Questions frequentes sur ... a __VILLE__</h2><h3>Q1 ?</h3><p>R1</p>...",
+  "BLOC_AVIS": [{{"note": 5, "texte": "Avis client realiste de 2-3 phrases, concret, humanise."}}, ...]
 }}
 
 CONSIGNES :
 - Chaque BLOC_H2 : 1 H2 + 2-3 H3 + paragraphes riches (200-300 mots)
 - BLOC_FAQ : 5 questions/reponses avec H3 pour chaque question
+- BLOC_AVIS : 10 a 12 avis clients realistes et varies (notes 4 ou 5), textes concrets lies au metier, sans nom de ville (pas de __VILLE__ dans les avis)
 - Ancres sous forme de <a href="__LIEN__">ancre</a>
 - __VILLE__ present dans chaque bloc au moins une fois
 - Mets en gras avec <strong> le mot-cle principal (2-3 occurrences par bloc, jamais dans les H2/H3)
@@ -467,6 +469,28 @@ Reponds uniquement avec le JSON."""
     # 7. Assemblage de la page complete
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def render_avis(avis: list, start: int = 0, count: int = 6) -> list[dict]:
+        """Sélectionne *count* avis en rotation à partir de l'index *start*.
+
+        La rotation par ville évite le duplicate content entre les pages.
+        """
+        clean = [
+            a for a in (avis or [])
+            if isinstance(a, dict) and a.get("texte")
+        ]
+        if not clean:
+            return []
+        return [clean[(start + i) % len(clean)] for i in range(min(count, len(clean)))]
+
+    @staticmethod
+    def _stars(note) -> str:
+        try:
+            n = max(1, min(5, int(note)))
+        except (TypeError, ValueError):
+            n = 5
+        return "★" * n + "☆" * (5 - n)
+
     def assemble_page(
         self,
         blocs: dict,
@@ -477,10 +501,13 @@ Reponds uniquement avec le JSON."""
         use_divi: bool = False,
         images: Optional[list[str]] = None,
         colors: Optional[dict] = None,
+        h1: str = "",
+        video_url: str = "",
+        avis: Optional[list] = None,
     ) -> str:
         """
-        Assemble les blocs, le maillage et les images en une page HTML
-        complete (ou en shortcodes Divi si *use_divi* est True).
+        Assemble les blocs, le maillage, les images, les avis clients et la
+        vidéo en une page HTML complete (ou en shortcodes Divi si *use_divi*).
 
         *ville* doit contenir au minimum ``{"nom": "Paris"}``.
         """
@@ -488,9 +515,11 @@ Reponds uniquement avec le JSON."""
         images = images or []
         colors = colors or {"primary": "#2EA3F2", "secondary": "#E02B20"}
 
-        # Remplacement des placeholders dans chaque bloc
+        # Remplacement des placeholders dans chaque bloc texte
         page_blocs: dict[str, str] = {}
         for key, html in blocs.items():
+            if key == "BLOC_AVIS":
+                continue  # liste d'avis, gérée séparément
             page_blocs[key] = replace_ville(str(html), nom_ville)
 
         # Remplacement du placeholder de lien __LIEN__
@@ -501,20 +530,74 @@ Reponds uniquement avec le JSON."""
                 "__LIEN__", f"/{slug_base}-{ville_slug}/"
             )
 
+        # Avis en rotation (décalés par ville pour l'unicité)
+        avis_list = avis if avis is not None else blocs.get("BLOC_AVIS", [])
+        selected_avis = self.render_avis(avis_list, start=variant_idx, count=6)
+
+        keyword = ctx.get("keyword", "")
+        zone_label = ville.get("zone_label") or nom_ville
+
         if use_divi:
-            return self._wrap_divi(page_blocs, maillage, images, colors)
-        return self._wrap_html(page_blocs, maillage, images)
+            return self._wrap_divi(
+                page_blocs, maillage, images, colors,
+                h1=h1, video_url=video_url, avis=selected_avis,
+                keyword=keyword, zone_label=zone_label,
+            )
+        return self._wrap_html(
+            page_blocs, maillage, images,
+            h1=h1, video_url=video_url, avis=selected_avis,
+            keyword=keyword, zone_label=zone_label,
+        )
 
     # --- assemblage HTML simple -------------------------------------------
 
-    def _wrap_html(self, blocs: dict, maillage: str, images: list[str]) -> str:
+    def _avis_html(self, avis: list[dict]) -> str:
+        if not avis:
+            return ""
+        notes = []
+        for a in avis:
+            try:
+                notes.append(max(1, min(5, int(a.get("note", 5)))))
+            except (TypeError, ValueError):
+                notes.append(5)
+        moyenne = round(sum(notes) / len(notes), 1)
+        parts = [
+            '<div class="avis-clients">',
+            "<h2>Ce que disent nos clients</h2>",
+            f"<p style='color:#F1C40F;font-size:22px'>★★★★★</p>"
+            f"<p style='color:#666;font-size:14px'>Note {moyenne}/5 — {len(avis)} avis vérifiés</p>",
+        ]
+        for a, n in zip(avis, notes):
+            parts.append(
+                f"<div class='avis'>"
+                f"<p style='color:#F1C40F;font-size:18px;margin-bottom:8px'>{self._stars(n)}</p>"
+                f"<p><em>&laquo;{a.get('texte', '')}&raquo;</em></p>"
+                f"</div>"
+            )
+        parts.append("</div>")
+        return "\n".join(parts)
+
+    def _wrap_html(
+        self,
+        blocs: dict,
+        maillage: str,
+        images: list[str],
+        h1: str = "",
+        video_url: str = "",
+        avis: Optional[list[dict]] = None,
+        keyword: str = "",
+        zone_label: str = "",
+    ) -> str:
         parts: list[str] = []
+
+        if h1:
+            parts.append(f"<h1>{h1}</h1>")
 
         parts.append(blocs.get("BLOC_INTRO", ""))
 
         if images:
             parts.append(
-                f'<figure><img src="{images[0]}" alt="" loading="lazy" /></figure>'
+                f'<figure><img src="{images[0]}" alt="{keyword} {zone_label}" loading="lazy" /></figure>'
             )
 
         for i in range(1, 5):
@@ -523,7 +606,7 @@ Reponds uniquement avec le JSON."""
                 parts.append(blocs[key])
             if i < len(images):
                 parts.append(
-                    f'<figure><img src="{images[i]}" alt="" loading="lazy" /></figure>'
+                    f'<figure><img src="{images[i]}" alt="{keyword} {zone_label}" loading="lazy" /></figure>'
                 )
 
         if "BLOC_FAQ" in blocs:
@@ -531,66 +614,181 @@ Reponds uniquement avec le JSON."""
 
         if maillage:
             parts.append('<div class="maillage-section">')
-            parts.append("<h2>Nos services dans votre region</h2>")
+            parts.append(
+                f"<p style='text-align:center;font-weight:700;font-size:16px;margin-bottom:14px'>"
+                f"Retrouvez <strong>{keyword}</strong> autour de {zone_label}</p>"
+            )
             parts.append(maillage)
             parts.append("</div>")
 
-        return "\n\n".join(parts)
+        avis_html = self._avis_html(avis or [])
+        if avis_html:
+            parts.append(avis_html)
+
+        if video_url:
+            parts.append(
+                f'<div class="video-section" style="text-align:center">'
+                f'<iframe width="560" height="315" src="{video_url}" frameborder="0" '
+                f'allowfullscreen loading="lazy"></iframe></div>'
+            )
+
+        return "\n\n".join(p for p in parts if p)
 
     # --- assemblage Divi Builder ------------------------------------------
 
     def _wrap_divi(
-        self, blocs: dict, maillage: str, images: list[str], colors: dict
+        self,
+        blocs: dict,
+        maillage: str,
+        images: list[str],
+        colors: dict,
+        h1: str = "",
+        video_url: str = "",
+        avis: Optional[list[dict]] = None,
+        keyword: str = "",
+        zone_label: str = "",
     ) -> str:
+        """Layout Divi riche, calqué sur le fichier d'import de référence :
+        H1 stylé, sections texte/image alternées (2 colonnes), FAQ, maillage
+        titré, avis clients en cartes, vidéo, CTA final.
+        """
         primary = colors.get("primary", "#2EA3F2")
         secondary = colors.get("secondary", "#E02B20")
 
-        def section(content: str, bg: str = "#ffffff") -> str:
+        TEXT_STYLE = (
+            "text_font='||||||||' text_font_size='16px' text_line_height='1.9em' "
+            f"header_2_font='|700|||||||' header_2_font_size='26px' header_2_text_color='{primary}' "
+            f"header_3_font='|600|||||||' header_3_text_color='#333333'"
+        )
+        IMG_STYLE = (
+            "align='center' max_width='90%' border_radii='on|8px|8px|8px|8px' "
+            "box_shadow_style='preset1' box_shadow_blur='30px' "
+            "box_shadow_color='rgba(0,0,0,0.12)'"
+        )
+
+        def text_section(content: str, bg: str = "#FFFFFF") -> str:
             return (
-                f'[et_pb_section fb_built="1" background_color="{bg}" '
-                f'custom_padding="40px||40px||false|false"]'
-                f'[et_pb_row][et_pb_column type="4_4"]'
-                f'[et_pb_text text_font_size="16px" text_line_height="1.8em"]'
-                f"{content}"
-                f"[/et_pb_text][/et_pb_column][/et_pb_row][/et_pb_section]"
+                f"[et_pb_section _builder_version='4.27.0' background_color='{bg}' "
+                f"custom_padding='30px|0px|30px|0px|false|false']"
+                f"[et_pb_row _builder_version='4.27.0' max_width='960px']"
+                f"[et_pb_column type='4_4' _builder_version='4.27.0']"
+                f"[et_pb_text _builder_version='4.27.0' {TEXT_STYLE}]{content}[/et_pb_text]"
+                f"[/et_pb_column][/et_pb_row][/et_pb_section]"
             )
 
-        def img_section(url: str) -> str:
+        def two_col_section(content: str, img: str, img_left: bool, bg: str) -> str:
+            text_col = (
+                f"[et_pb_column type='1_2' _builder_version='4.27.0']"
+                f"[et_pb_text _builder_version='4.27.0' {TEXT_STYLE}]{content}[/et_pb_text]"
+                f"[/et_pb_column]"
+            )
+            img_col = (
+                f"[et_pb_column type='1_2' _builder_version='4.27.0' custom_padding='40px||||false|false']"
+                f"[et_pb_image src='{img}' alt='{keyword} {zone_label}' _builder_version='4.27.0' {IMG_STYLE}][/et_pb_image]"
+                f"[/et_pb_column]"
+            )
+            cols = img_col + text_col if img_left else text_col + img_col
             return (
-                f'[et_pb_section fb_built="1" custom_padding="20px||20px||false|false"]'
-                f'[et_pb_row][et_pb_column type="4_4"]'
-                f'[et_pb_image src="{url}" align="center" '
-                f'force_fullwidth="on"][/et_pb_image]'
-                f"[/et_pb_column][/et_pb_row][/et_pb_section]"
+                f"[et_pb_section _builder_version='4.27.0' background_color='{bg}' "
+                f"custom_padding='30px|0px|30px|0px|false|false']"
+                f"[et_pb_row column_structure='1_2,1_2' _builder_version='4.27.0' "
+                f"use_custom_gutter='on' gutter_width='3' equalize_columns='on']"
+                f"{cols}[/et_pb_row][/et_pb_section]"
             )
 
         parts: list[str] = []
 
-        # Intro
-        parts.append(section(blocs.get("BLOC_INTRO", "")))
-        if images:
-            parts.append(img_section(images[0]))
+        # En-tête H1
+        if h1:
+            parts.append(
+                f"[et_pb_section _builder_version='4.27.0' background_color='#FFFFFF' "
+                f"custom_padding='30px|0px|10px|0px|false|false']"
+                f"[et_pb_row _builder_version='4.27.0' max_width='960px']"
+                f"[et_pb_column type='4_4' _builder_version='4.27.0']"
+                f"[et_pb_text _builder_version='4.27.0' header_font='|700|||||||' "
+                f"header_font_size='32px' header_text_color='#222222' header_line_height='1.3em' "
+                f"custom_padding='||10px||false|false']<h1>{h1}</h1>[/et_pb_text]"
+                f"[/et_pb_column][/et_pb_row][/et_pb_section]"
+            )
 
-        # Blocs H2 avec alternance de fond
-        bg_alt = ["#ffffff", "#f7f7f7", "#ffffff", "#f7f7f7"]
+        # Intro pleine largeur
+        parts.append(text_section(blocs.get("BLOC_INTRO", "")))
+
+        # Blocs H2 : alternance texte/image en 2 colonnes quand une image existe
+        bg_alt = ["#FFFFFF", "#F7F9FB", "#FFFFFF", "#F7F9FB"]
         for i in range(1, 5):
             key = f"BLOC_H2_{i}"
-            if key in blocs:
-                parts.append(section(blocs[key], bg_alt[i - 1]))
-            if i < len(images):
-                parts.append(img_section(images[i]))
+            if key not in blocs:
+                continue
+            img = images[(i - 1) % len(images)] if images else ""
+            if img:
+                parts.append(two_col_section(blocs[key], img, img_left=(i % 2 == 0), bg=bg_alt[i - 1]))
+            else:
+                parts.append(text_section(blocs[key], bg_alt[i - 1]))
 
         # FAQ
         if "BLOC_FAQ" in blocs:
-            parts.append(section(blocs["BLOC_FAQ"], "#f0f4f8"))
+            parts.append(text_section(blocs["BLOC_FAQ"], "#F0F4F8"))
 
-        # Maillage
+        # Maillage interne titré
         if maillage:
-            parts.append(
-                section(
-                    f"<h2>Nos services dans votre region</h2>\n{maillage}",
-                    "#eaf2e3",
+            titre = (
+                f"<p style='text-align:center;font-weight:700;font-size:16px;margin-bottom:14px'>"
+                f"Retrouvez <strong>{keyword}</strong> autour de {zone_label}</p>"
+            )
+            parts.append(text_section(f"{titre}\n{maillage}", "#EAF2E3"))
+
+        # Avis clients en cartes (3 colonnes max par rangée)
+        if avis:
+            notes = []
+            for a in avis:
+                try:
+                    notes.append(max(1, min(5, int(a.get("note", 5)))))
+                except (TypeError, ValueError):
+                    notes.append(5)
+            moyenne = round(sum(notes) / len(notes), 1)
+            header = (
+                f"[et_pb_row _builder_version='4.27.0' max_width='960px']"
+                f"[et_pb_column type='4_4' _builder_version='4.27.0']"
+                f"[et_pb_text _builder_version='4.27.0' text_orientation='center' "
+                f"header_2_font='|700|||||||' header_2_font_size='26px' header_2_text_color='{primary}']"
+                f"<h2>Ce que disent nos clients</h2>"
+                f"<p style='color:#F1C40F;font-size:22px'>★★★★★</p>"
+                f"<p style='color:#666;font-size:14px'>Note {moyenne}/5 — {len(avis)} avis vérifiés</p>"
+                f"[/et_pb_text][/et_pb_column][/et_pb_row]"
+            )
+            cards_rows = []
+            for chunk_start in range(0, len(avis), 3):
+                chunk = list(zip(avis, notes))[chunk_start:chunk_start + 3]
+                cols = "".join(
+                    f"[et_pb_column type='1_3' _builder_version='4.27.0']"
+                    f"[et_pb_text _builder_version='4.27.0' background_color='#FFFFFF' "
+                    f"border_radii='on|8px|8px|8px|8px' custom_padding='18px|18px|18px|18px|true|true' "
+                    f"text_font_size='14px' text_line_height='1.7em' text_text_color='#444444']"
+                    f"<p style='color:#F1C40F;font-size:18px;margin-bottom:8px'>{self._stars(n)}</p>"
+                    f"<p><em>&laquo;{a.get('texte', '')}&raquo;</em></p>"
+                    f"[/et_pb_text][/et_pb_column]"
+                    for a, n in chunk
                 )
+                cards_rows.append(
+                    f"[et_pb_row column_structure='1_3,1_3,1_3' _builder_version='4.27.0' "
+                    f"max_width='960px' column_padding_mobile='on']{cols}[/et_pb_row]"
+                )
+            parts.append(
+                f"[et_pb_section _builder_version='4.27.0' background_color='#F7F9FB' "
+                f"custom_padding='40px|0px|40px|0px|false|false']{header}{''.join(cards_rows)}[/et_pb_section]"
+            )
+
+        # Vidéo
+        if video_url:
+            parts.append(
+                f"[et_pb_section _builder_version='4.27.0' background_color='#FFFFFF' "
+                f"custom_padding='30px|0px|30px|0px|false|false']"
+                f"[et_pb_row _builder_version='4.27.0' max_width='960px']"
+                f"[et_pb_column type='4_4' _builder_version='4.27.0']"
+                f"[et_pb_video src='{video_url}' _builder_version='4.27.0' "
+                f"max_width='720px' module_alignment='center'][/et_pb_video]"
+                f"[/et_pb_column][/et_pb_row][/et_pb_section]"
             )
 
         # CTA final

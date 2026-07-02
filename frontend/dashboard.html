@@ -156,6 +156,10 @@ setTimeout(()=>URL.revokeObjectURL(a.href),5000);
 }catch(e){alert('Téléchargement impossible : '+e.message);}
 }
 const fmt=n=>n!=null?Number(n).toLocaleString('fr-FR'):'\u2014';
+// \u00c9chappement pour injection dans un attribut HTML (value="...") \u2014 un guillemet
+// dans une valeur (ex: instructions Claude) cassait tout le panneau de config.
+const escAttr=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const esc=escAttr; // échappement texte (anti-XSS : mots-clés GSC, noms de sites...)
 const deltaHtml=v=>{if(!v||v===0)return'';const p=v>0;return `<span class="${p?'up':'down'}">${p?'+':''}${Number(v).toFixed(1)}</span>`;};
 const pillHtml=(text,color)=>`<span class="pill" style="background:${color}20;color:${color}">${text}</span>`;
 
@@ -228,8 +232,8 @@ h+=`<div class="card" style="margin-bottom:16px;padding:0;overflow:hidden">`;
 h+=`<div class="site-row" id="site-row-${si.id}" onclick="toggleSiteConfig(${si.id})" style="padding:16px 22px;border-bottom:1px solid var(--border);border-radius:0">
 <div class="site-dot" style="background:${si.sc_connected?'var(--success)':'var(--muted)'}"></div>
 <div style="flex:1;min-width:0">
-<div style="font-size:15px;font-weight:700">${si.name}${si.sc_connected?'':' <span style="font-size:9px;padding:2px 6px;background:var(--card2);border-radius:4px;color:var(--muted);font-weight:500">GSC non connecté</span>'}</div>
-<div style="font-size:11px;color:var(--muted);margin-top:2px">${si.domain} \u2022 ${si.host_provider||'non config.'}</div>
+<div style="font-size:15px;font-weight:700">${esc(si.name)}${si.sc_connected?'':' <span style="font-size:9px;padding:2px 6px;background:var(--card2);border-radius:4px;color:var(--muted);font-weight:500">GSC non connecté</span>'}</div>
+<div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(si.domain)} \u2022 ${esc(si.host_provider||'non config.')}</div>
 </div>
 <span class="cfg-icon" id="cfg-icon-${si.id}">\u2699\uFE0F</span>
 <span style="font-size:14px;color:var(--muted);margin-left:2px;cursor:pointer;opacity:.4" title="Supprimer" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.4" onclick="event.stopPropagation();confirmDeleteSite(${si.id},'${si.name.replace(/'/g,"\\'")}')">&#x1F5D1;</span>
@@ -260,7 +264,7 @@ h+=`<div style="display:grid;grid-template-columns:1fr 1fr;border-bottom:${(opps
 h+=`<div style="padding:14px 18px;border-right:1px solid var(--border)">
 <div style="font-size:10px;color:var(--accent);text-transform:uppercase;font-weight:600;letter-spacing:.3px;margin-bottom:8px">Opportunités</div>`;
 if(opps.length){opps.forEach(o=>{
-h+=`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px"><span>${o.keyword}</span><span style="color:var(--warn);font-weight:600;font-family:var(--mono)">pos.${Math.round(o.position)}</span></div>`;
+h+=`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px"><span>${esc(o.keyword)}</span><span style="color:var(--warn);font-weight:600;font-family:var(--mono)">pos.${Math.round(o.position)}</span></div>`;
 });}else{h+=`<div style="font-size:11px;color:var(--muted)">Aucune</div>`;}
 h+=`</div>`;
 
@@ -268,7 +272,7 @@ h+=`</div>`;
 h+=`<div style="padding:14px 18px">
 <div style="font-size:10px;color:var(--danger);text-transform:uppercase;font-weight:600;letter-spacing:.3px;margin-bottom:8px">Baisses</div>`;
 if(drops.length){drops.forEach(d=>{
-h+=`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px"><span>${d.keyword}</span><span style="color:var(--danger);font-weight:600;font-family:var(--mono)">${Math.round(d.from)}\u2192${Math.round(d.to)}</span></div>`;
+h+=`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px"><span>${esc(d.keyword)}</span><span style="color:var(--danger);font-weight:600;font-family:var(--mono)">${Math.round(d.from)}\u2192${Math.round(d.to)}</span></div>`;
 });}else{h+=`<div style="font-size:11px;color:var(--muted)">Aucune</div>`;}
 h+=`</div></div>`;
 }
@@ -298,7 +302,7 @@ const siteIds=siteActions.map(a=>a.id);
 h+=`<div class="card" style="padding:0;overflow:hidden;margin-bottom:16px">`;
 // Header du groupe
 h+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 20px;border-bottom:1px solid var(--border);background:var(--card2)">
-<div style="font-size:13px;font-weight:700">${group.name} <span style="font-size:11px;color:var(--muted);font-weight:400">(${siteActions.length} actions)</span></div>
+<div style="font-size:13px;font-weight:700">${esc(group.name)} <span style="font-size:11px;color:var(--muted);font-weight:400">(${siteActions.length} actions)</span></div>
 <div style="display:flex;gap:6px">
 <button class="btn2 btn-sm" onclick="rejectBatch([${siteIds.join(',')}])">Tout rejeter</button>
 <button class="btn-success" style="font-size:11px;padding:4px 14px" onclick="validateAll([${siteIds.join(',')}])">Tout valider</button>
@@ -331,10 +335,10 @@ const rowBg=isFailed?'background:#fff0f0':isRunning?'background:#fff8f0':'';
 h+=`<div style="display:flex;align-items:center;gap:12px;padding:10px 20px;border-bottom:1px solid var(--border);${rowBg}">
 <div style="flex:1;min-width:0">
 <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
-<span style="font-size:13px;font-weight:600">${a.keyword||a.title}</span>${statusPill}
+<span style="font-size:13px;font-weight:600">${esc(a.keyword||a.title)}</span>${statusPill}
 </div>
-<div style="font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${(a.description||'').split('\\nERREUR:')[0]}</div>
-${isFailed&&a.description&&a.description.includes('ERREUR:')?`<div style="font-size:10px;color:var(--danger);margin-top:4px;font-family:var(--mono)">${a.description.split('ERREUR:').pop().substring(0,100)}</div>`:''}
+<div style="font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc((a.description||'').split('\\nERREUR:')[0])}</div>
+${isFailed&&a.description&&a.description.includes('ERREUR:')?`<div style="font-size:10px;color:var(--danger);margin-top:4px;font-family:var(--mono)">${esc(a.description.split('ERREUR:').pop().substring(0,100))}</div>`:''}
 </div>
 <div class="flex-gap-8" style="flex-shrink:0">${pillHtml(typeLabel,typeColor)}${a.search_volume>0?`<span style="font-size:10px;color:var(--muted)">vol.${fmt(a.search_volume)}</span>`:''}${posInfo?`<span class="down" style="font-size:10px">${posInfo}</span>`:''}</div>
 <div style="font-size:14px;font-weight:700;color:var(--accent);font-family:var(--mono);min-width:40px;text-align:right">${fmt(Math.round(a.impact_score))}</div>
@@ -355,7 +359,9 @@ document.getElementById('tab-0').innerHTML=h;
 function toggleAddSite(){document.getElementById('add-site-form').classList.toggle('hidden');}
 
 async function addSite(){
-const d={name:document.getElementById('ns-name').value,domain:document.getElementById('ns-domain').value,niche:document.getElementById('ns-niche').value,host_provider:document.getElementById('ns-host').value,editorial_tone:document.getElementById('ns-tone').value};
+const d={name:document.getElementById('ns-name').value.trim(),domain:document.getElementById('ns-domain').value.trim(),editorial_tone:document.getElementById('ns-tone').value};
+const niche=document.getElementById('ns-niche').value.trim();if(niche)d.niche=niche;
+const host=document.getElementById('ns-host').value.trim();if(host)d.host_provider=host;
 if(!d.name||!d.domain)return;
 try{await apiFetch('/sites/',{method:'POST',body:JSON.stringify(d)});
 document.getElementById('ns-name').value='';document.getElementById('ns-domain').value='';document.getElementById('ns-niche').value='';document.getElementById('ns-host').value='';
@@ -453,8 +459,8 @@ panel.innerHTML=`<div class="cfg-panel">
 
 <div class="accent-title">WordPress</div>
 <div class="grid2 mb-16">
-<div><label>URL Admin WP</label><input id="cf-wpadmin-${id}" value="${si.wp_admin_url||''}" placeholder="https://site.fr/wp-admin/"></div>
-<div><label>Username WP</label><input id="cf-wpuser-${id}" value="${si.wp_username||''}"></div>
+<div><label>URL Admin WP</label><input id="cf-wpadmin-${id}" value="${escAttr(si.wp_admin_url)}" placeholder="https://site.fr/wp-admin/"></div>
+<div><label>Username WP</label><input id="cf-wpuser-${id}" value="${escAttr(si.wp_username)}"></div>
 <div><label>Application Password</label><input id="cf-wppass-${id}" type="password" placeholder="laisser vide pour ne pas changer"></div>
 <div><label>Plugin SEO</label><select id="cf-seoplug-${id}">
 <option value="">--</option>
@@ -477,14 +483,14 @@ ${si.sc_connected
 
 <div class="accent-title">Hébergement</div>
 <div class="grid2 mb-16">
-<div><label>Hébergeur</label><input id="cf-host-${id}" value="${si.host_provider||''}" placeholder="OVH, Hetzner..."></div>
-<div><label>IP</label><input id="cf-hostip-${id}" value="${si.host_ip||''}" placeholder="1.2.3.4"></div>
-<div><label>Localisation</label><input id="cf-vpslocale-${id}" value="${si.vps_location||''}" placeholder="FR, DE, NL..."></div>
+<div><label>Hébergeur</label><input id="cf-host-${id}" value="${escAttr(si.host_provider)}" placeholder="OVH, Hetzner..."></div>
+<div><label>IP</label><input id="cf-hostip-${id}" value="${escAttr(si.host_ip)}" placeholder="1.2.3.4"></div>
+<div><label>Localisation</label><input id="cf-vpslocale-${id}" value="${escAttr(si.vps_location)}" placeholder="FR, DE, NL..."></div>
 </div>
 
 <div class="accent-title">Profil éditorial</div>
 <div class="grid2 mb-16">
-<div><label>Niche</label><input id="cf-niche-${id}" value="${si.niche||''}"></div>
+<div><label>Niche</label><input id="cf-niche-${id}" value="${escAttr(si.niche)}"></div>
 <div><label>Ton</label><select id="cf-tone-${id}">
 <option value="conversationnel"${si.editorial_tone==='conversationnel'?' selected':''}>Conversationnel</option>
 <option value="journalistique"${si.editorial_tone==='journalistique'?' selected':''}>Journalistique</option>
@@ -493,7 +499,7 @@ ${si.sc_connected
 <option value="academique"${si.editorial_tone==='academique'?' selected':''}>Académique</option>
 </select></div>
 <div><label>Longueur (mots)</label><input id="cf-artlen-${id}" type="number" value="${si.avg_article_length||1500}"></div>
-<div><label>Instructions Claude</label><input id="cf-style-${id}" value="${si.editorial_style||''}" placeholder="Style, ton, exemples..."></div>
+<div><label>Instructions Claude</label><input id="cf-style-${id}" value="${escAttr(si.editorial_style)}" placeholder="Style, ton, exemples..."></div>
 </div>
 
 <div style="display:flex;gap:8px;justify-content:flex-end">
@@ -530,7 +536,9 @@ if(wppass)d.wp_app_password=wppass;
 const res=await apiFetch('/sites/'+id,{method:'PUT',body:JSON.stringify(d)});
 msgEl.style.color='var(--success)';
 msgEl.textContent='\u2713 Sauvegardé';
-setTimeout(()=>{msgEl.textContent='';loadOverview();},1500);
+// Ne PAS recharger l'overview ici : ça re-rendait tout l'onglet et détruisait
+// le panneau ouvert avec les champs en cours d'édition (perte de saisie).
+setTimeout(()=>{msgEl.textContent='';},2500);
 }catch(e){
 msgEl.style.color='var(--danger)';
 msgEl.textContent='Erreur : '+e.message;
@@ -1409,9 +1417,26 @@ ${chevron}
 <input id="g-comp-url2" placeholder="https://concurrent2.fr" style="margin-bottom:6px">
 <input id="g-comp-url3" placeholder="https://concurrent3.fr">
 </div>
-<div style="display:flex;align-items:center">
-<input type="checkbox" id="g-webarchive" style="width:auto;margin-right:8px"><label for="g-webarchive" style="margin:0;text-transform:none;font-size:13px;color:var(--text)">Utiliser Web Archive</label>
+<div style="display:flex;align-items:center;margin-bottom:14px">
+<input type="checkbox" id="g-webarchive" style="width:auto;margin-right:8px"><label for="g-webarchive" style="margin:0;text-transform:none;font-size:13px;color:var(--text)">Utiliser Web Archive (reprend la structure et le contenu du site archivé, corrigés)</label>
 </div>
+<div class="accent-title">Logo</div>
+<div style="margin-bottom:10px;display:flex;gap:24px;align-items:center;flex-wrap:wrap">
+<label style="margin:0;display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text)">
+<input type="radio" name="g-logo-mode" value="none" checked style="width:auto"> Aucun
+</label>
+<label style="margin:0;display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text)">
+<input type="radio" name="g-logo-mode" value="ai" style="width:auto"> Générer par IA (OpenAI)
+</label>
+<label style="margin:0;display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text)">
+<input type="radio" name="g-logo-mode" value="url" style="width:auto"> Depuis une URL
+</label>
+</div>
+<div id="g-logo-url-wrap" class="hidden" style="margin-bottom:6px">
+<label>URL du logo existant</label>
+<input id="g-logo-url" placeholder="https://monsite.fr/logo.png">
+</div>
+<div style="font-size:11px;color:var(--muted)">Le logo est automatiquement recadré et redimensionné (header, retina, favicon).</div>
 </div></div>`;
 
 // Section 5 - E-E-A-T Google
@@ -1476,6 +1501,13 @@ document.getElementById('g-mode-manuel').classList.toggle('hidden',m!=='manuel')
 document.getElementById('g-mode-concurrent').classList.toggle('hidden',m!=='concurrent');
 });
 });
+// Gestion du mode logo (champ URL affiché uniquement en mode "url")
+document.querySelectorAll('input[name="g-logo-mode"]').forEach(r=>{
+r.addEventListener('change',()=>{
+const m=document.querySelector('input[name="g-logo-mode"]:checked').value;
+document.getElementById('g-logo-url-wrap').classList.toggle('hidden',m!=='url');
+});
+});
 }
 
 async function runFullInstall(){
@@ -1520,6 +1552,8 @@ generation_mode:genMode,
 site_prompt:document.getElementById('g-site-prompt').value.trim(),
 competitor_urls:compUrls,
 use_webarchive:document.getElementById('g-webarchive').checked,
+generate_logo:document.querySelector('input[name="g-logo-mode"]:checked').value==='ai',
+logo_url:document.querySelector('input[name="g-logo-mode"]:checked').value==='url'?document.getElementById('g-logo-url').value.trim():'',
 eat_enabled:document.getElementById('g-eat-enabled').checked,
 business_name:document.getElementById('g-biz-name').value.trim(),
 business_address:document.getElementById('g-biz-address').value.trim(),
@@ -1552,7 +1586,7 @@ return;
 
 if(_genPollInterval)clearInterval(_genPollInterval);
 
-const stepLabels={init:'Initialisation',ftp_upload:'Upload FTP',database:'Base de donnees',wp_install:'Installation WP',theme:'Installation theme',content:'Generation contenu',eat:'Blocs E-A-T',done:'Termine'};
+const stepLabels={init:'Initialisation',ftp_upload:'Upload FTP',database:'Base de donnees',wp_install:'Installation WP',logo:'Logo (generation + redimensionnement)',theme:'Installation theme',content:'Generation contenu',eat:'Blocs E-A-T',done:'Termine'};
 
 _genPollInterval=setInterval(async()=>{
 try{
@@ -1671,10 +1705,11 @@ h+=`<div ${stepStyle}>
 <label ${chkLabel}><input type="checkbox" id="geo-divi"> Format Divi Builder</label>
 <label ${chkLabel}><input type="checkbox" id="geo-ai-content"> G\u00e9n\u00e9rer contenu IA (Claude)</label>
 <label ${chkLabel}><input type="checkbox" id="geo-concurrence"> Analyse concurrentielle</label>
+<label ${chkLabel}><input type="checkbox" id="geo-departements"> Pages d\u00e9partements</label>
 </div>
 <div class="grid2 mb-16">
 <div><label>Nombre de variantes</label><input type="number" id="geo-variantes" min="1" max="5" value="1"></div>
-<div></div>
+<div><label>URL vid\u00e9o YouTube/Vimeo (optionnel)</label><input id="geo-video" placeholder="https://www.youtube.com/watch?v=..."></div>
 </div>
 <div style="margin-top:4px">
 <div ${stepHead} onclick="geoToggleStep('geo-colors-body',this)" style="padding:10px 16px;background:var(--card2);border-radius:8px;margin-bottom:0">
@@ -1806,6 +1841,8 @@ post_status:document.getElementById('geo-post-status').value||'draft',
 post_thumbnail:document.getElementById('geo-thumbnail').value||'',
 min_population:Number(document.getElementById('geo-pop').value),
 use_divi:document.getElementById('geo-divi').checked,
+include_departments:document.getElementById('geo-departements').checked,
+video_url:document.getElementById('geo-video').value.trim(),
 nb_variants:Number(document.getElementById('geo-variantes').value)||1,
 source_text:document.getElementById('geo-source-text').value||'',
 competitor_urls:useConcurrence?[
@@ -1878,6 +1915,7 @@ res=await apiFetch('/geoloc/generate-file',{method:'POST',body:JSON.stringify({
 keyword_template:full.keyword_template,site_name:full.site_name,site_domain:full.site_domain,
 post_author:full.post_author,post_category:full.post_category,post_status:full.post_status,
 post_thumbnail:full.post_thumbnail,min_population:full.min_population,use_divi:full.use_divi,
+include_departments:full.include_departments,
 generate_content:false,
 ...(full.regions&&{regions:full.regions}),...(full.departments&&{departments:full.departments}),
 })});

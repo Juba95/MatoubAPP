@@ -319,11 +319,9 @@ class WebArchiveScraper:
         r.raise_for_status()
         return r.text
 
-    def _extract(self, html: str) -> dict:
-        def strip_tags(s: str) -> str:
-            return re.sub(r"<[^>]+>", "", s).strip()
-
-        # Supprimer scripts/styles/toolbar Wayback Machine
+    @staticmethod
+    def _clean_html(html: str) -> str:
+        """Supprime scripts/styles/toolbar Wayback Machine."""
         html = re.sub(
             r"<!-- BEGIN WAYBACK.*?END WAYBACK[^>]*-->", "", html,
             flags=re.DOTALL,
@@ -336,6 +334,13 @@ class WebArchiveScraper:
             r"<style[^>]*>.*?</style>", "", html,
             flags=re.DOTALL | re.IGNORECASE,
         )
+        return html
+
+    def _extract(self, html: str) -> dict:
+        def strip_tags(s: str) -> str:
+            return re.sub(r"<[^>]+>", "", s).strip()
+
+        html = self._clean_html(html)
 
         m = re.search(
             r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL,
@@ -349,22 +354,27 @@ class WebArchiveScraper:
         )
         meta_desc = m.group(1).strip() if m else ""
 
-        headings = [
-            strip_tags(h) for h in
-            re.findall(
-                r"<h[1-3][^>]*>(.*?)</h[1-3]>", html,
+        # Structure ordonnée : titres H1-H4 dans l'ordre du document,
+        # avec leur niveau — c'est elle qui permet de « reprendre la structure ».
+        structure = [
+            {"level": int(lvl), "text": strip_tags(h)}
+            for lvl, h in re.findall(
+                r"<h([1-4])[^>]*>(.*?)</h\1>", html,
                 re.IGNORECASE | re.DOTALL,
             )
             if strip_tags(h)
-        ][:20]
+        ][:40]
+        headings = [s["text"] for s in structure][:20]
 
+        # Contenu quasi intégral (paragraphes complets, budget global géré
+        # au niveau de get_context)
         paragraphs = [
             strip_tags(p) for p in
             re.findall(
                 r"<p[^>]*>(.*?)</p>", html, re.IGNORECASE | re.DOTALL,
             )
             if len(strip_tags(p)) > 40
-        ][:15]
+        ][:40]
 
         list_items = [
             strip_tags(li) for li in
@@ -372,12 +382,35 @@ class WebArchiveScraper:
                 r"<li[^>]*>(.*?)</li>", html, re.IGNORECASE | re.DOTALL,
             )
             if len(strip_tags(li)) > 10
-        ][:20]
+        ][:30]
 
         return dict(
-            title=title, meta_desc=meta_desc,
+            title=title, meta_desc=meta_desc, structure=structure,
             headings=headings, paragraphs=paragraphs, list_items=list_items,
         )
+
+    def _internal_links(self, html: str, archive_url: str) -> list[str]:
+        """Liens internes archivés (pages du même domaine) depuis une page Wayback."""
+        clean_domain = re.sub(r"https?://(www\.)?", "", self.domain).rstrip("/")
+        links = re.findall(r'href=["\'](/web/\d+/[^"\']+)["\']', html)
+        seen: set[str] = set()
+        result = []
+        for link in links:
+            if clean_domain not in link:
+                continue
+            # Ignorer assets et ancres
+            if re.search(r"\.(css|js|png|jpe?g|gif|svg|ico|pdf|xml|webp)(\?|$)", link, re.I):
+                continue
+            # Chemin de la page (après le domaine) pour dédoublonner
+            m = re.search(re.escape(clean_domain) + r"(/[^\"'#?]*)", link)
+            path = (m.group(1) if m else "/").rstrip("/") or "/"
+            if path in ("/", "") or path in seen:
+                continue
+            seen.add(path)
+            result.append(f"https://web.archive.org{link}")
+            if len(result) >= 4:
+                break
+        return result
 
     def get_context(self) -> dict:
         """
@@ -399,37 +432,70 @@ class WebArchiveScraper:
             logger.warning("Impossible de scraper l'archive : %s", e)
             return {"archive_url": archive_url, "raw": {}, "prompt_context": None}
 
+        # Pages internes archivées (services, contact, à-propos...) pour
+        # reprendre la structure COMPLÈTE du site, pas seulement l'accueil.
+        subpages: list[dict] = []
+        for sub_url in self._internal_links(html, archive_url):
+            try:
+                sub_html = self._fetch_html(sub_url)
+                sub = self._extract(sub_html)
+                sub["url"] = sub_url
+                subpages.append(sub)
+                logger.info("Sous-page archivée récupérée : %s", sub_url)
+            except Exception as e:
+                logger.warning("Sous-page archive inaccessible (%s) : %s", sub_url, e)
+
         logger.info(
-            "Contenu archive extrait : %d titres, %d paragraphes, %d listes",
+            "Contenu archive extrait : %d titres, %d paragraphes, %d listes, %d sous-pages",
             len(content["headings"]),
             len(content["paragraphs"]),
             len(content["list_items"]),
+            len(subpages),
         )
 
+        def page_block(c: dict, label: str, char_budget: int) -> list[str]:
+            lines = [f"\n─── {label} ───"]
+            if c.get("title"):
+                lines.append(f"Titre : {c['title']}")
+            if c.get("meta_desc"):
+                lines.append(f"Meta description : {c['meta_desc']}")
+            if c.get("structure"):
+                lines.append("Structure (ordre exact des titres) :")
+                lines += [
+                    f"  {'  ' * (s['level'] - 1)}H{s['level']} — {s['text']}"
+                    for s in c["structure"]
+                ]
+            used = 0
+            if c.get("paragraphs"):
+                lines.append("Contenu intégral :")
+                for p in c["paragraphs"]:
+                    if used + len(p) > char_budget:
+                        break
+                    lines.append(f"  › {p}")
+                    used += len(p)
+            if c.get("list_items"):
+                lines.append("Listes (services / produits / arguments) :")
+                lines += [f"  – {li[:200]}" for li in c["list_items"]]
+            return lines
+
         lines = [
-            "═══ CONTENU DU SITE EXISTANT (Wayback Machine) ═══",
+            "═══ SITE EXISTANT À REPRENDRE (Wayback Machine) ═══",
             f"Archive URL : {archive_url}",
-            f"Titre : {content['title']}",
-            f"Meta description : {content['meta_desc']}",
         ]
-        if content["headings"]:
-            lines.append("\nTitres / sections :")
-            lines += [f"  • {h}" for h in content["headings"]]
-        if content["paragraphs"]:
-            lines.append("\nContenu textuel :")
-            lines += [f"  › {p[:250]}" for p in content["paragraphs"]]
-        if content["list_items"]:
-            lines.append("\nServices / produits listes :")
-            lines += [f"  – {li[:150]}" for li in content["list_items"]]
+        lines += page_block(content, "PAGE D'ACCUEIL", 8000)
+        for sub in subpages:
+            lines += page_block(sub, f"PAGE : {sub.get('url', '')}", 3000)
+
         lines += [
             "",
-            "═══ INSTRUCTIONS POUR CLAUDE ═══",
-            "Ce contenu provient du site existant du client.",
-            "OBJECTIF : ameliore-le — ne repars PAS de zero.",
-            "  • Conserve les informations specifiques (nom, services, localisation, tarifs).",
-            "  • Modernise le wording, supprime les formulations obsoletes ou generiques.",
-            "  • Optimise pour le SEO (titres, descriptions, structure).",
-            "  • Enrichis les sections incompletes avec du contenu coherent.",
+            "═══ INSTRUCTIONS POUR CLAUDE (mode Web Archive) ═══",
+            "Ce contenu est le site existant du client. OBJECTIF : le REPRENDRE, pas le réinventer.",
+            "  • REPRENDS LA STRUCTURE COMPLÈTE : mêmes pages, mêmes sections, même ordre de titres (Hn ci-dessus).",
+            "  • REPRENDS LE CONTENU quasi intégralement : retravaille-le LÉGÈREMENT (reformulations douces),",
+            "    corrige l'orthographe, la grammaire et les erreurs factuelles évidentes.",
+            "  • Conserve TOUTES les informations spécifiques : nom, services, tarifs, adresses, téléphones, horaires, zones.",
+            "  • N'invente pas de nouveaux services ni de nouvelles sections, sauf si une section standard essentielle manque (contact, mentions légales).",
+            "  • Optimise les balises SEO (title, meta, Hn) sans changer le sens.",
             "  • Ton professionnel et naturel — aucune formulation IA.",
             "═══════════════════════════════════════════════════",
         ]
@@ -437,6 +503,7 @@ class WebArchiveScraper:
         return {
             "archive_url": archive_url,
             "raw": content,
+            "subpages": subpages,
             "prompt_context": prompt_context,
         }
 
@@ -1065,7 +1132,7 @@ RULES:
         if eat_context:
             full_prompt += eat_context
 
-        raw = self._call(system, full_prompt, max_tokens=8000)
+        raw = self._call(system, full_prompt, max_tokens=12000)
         data = json.loads(raw)
         logger.info(
             "Theme '%s' genere (%d fichiers, %d pages)",
@@ -1160,7 +1227,7 @@ DIVI SHORTCODE RULES:
         if eat_context:
             full_prompt += eat_context
 
-        raw = self._call(system, full_prompt, max_tokens=8000)
+        raw = self._call(system, full_prompt, max_tokens=12000)
         data = json.loads(raw)
         logger.info(
             "Layouts Divi generes (%d pages)", len(data.get("pages", [])),
@@ -1168,7 +1235,7 @@ DIVI SHORTCODE RULES:
         return data
 
     def _call(self, system: str, user_prompt: str,
-              max_tokens: int = 8000) -> str:
+              max_tokens: int = 12000) -> str:
         """Appel Claude avec retry (3 tentatives) et nettoyage JSON."""
         for attempt in range(1, 4):
             try:
@@ -1184,6 +1251,21 @@ DIVI SHORTCODE RULES:
                 if attempt == 3:
                     raise
                 time.sleep(2)
+                continue
+
+            if getattr(r, "stop_reason", None) == "max_tokens":
+                # Réponse tronquée = JSON forcément invalide : inutile de parser,
+                # on retente avec plus de tokens de sortie.
+                logger.warning(
+                    "Réponse Claude tronquée à %d tokens (tentative %d/3) — "
+                    "nouvel essai avec un budget élargi", max_tokens, attempt,
+                )
+                max_tokens = min(max_tokens + 4000, 16000)
+                if attempt == 3:
+                    raise RuntimeError(
+                        "Génération du thème tronquée (max_tokens atteint) — "
+                        "réduis le nombre de pages ou le contenu source"
+                    )
                 continue
 
             raw = r.content[0].text.strip()
@@ -1393,6 +1475,178 @@ Rules:
 # ═════════════════════════════════════════════════════════════════
 #  LOGO GENERATOR — Ideogram v2 via Replicate
 # ═════════════════════════════════════════════════════════════════
+
+class OpenAILogoGenerator:
+    """
+    Génère un logo via l'API OpenAI (gpt-image-1) ou reprend un logo fourni
+    par URL, le redimensionne proprement (Pillow) et l'uploade en FTP.
+
+    Tailles produites :
+      - logo.png      : hauteur max 160 px (usage header, ratio conservé)
+      - logo@2x.png   : version retina (hauteur max 320 px)
+      - favicon.png   : carré 512×512 centré (site icon WordPress)
+    """
+
+    API_URL = "https://api.openai.com/v1/images/generations"
+
+    def __init__(self, api_key: str):
+        if not api_key:
+            raise ValueError(
+                "OPENAI_API_KEY manquante — configure la clé « generationimage » dans le .env"
+            )
+        self.api_key = api_key
+
+    # ── Prompt logo (via Claude, réutilise le contexte du site) ─────
+
+    def build_prompt(self, claude_client: anthropic.Anthropic,
+                     site_prompt: str) -> str:
+        system = """You are an expert logo designer writing prompts for an AI image model.
+Return ONLY valid JSON: {"prompt": "detailed English prompt"}
+Prompt rules:
+- Start with: "Professional logo for [BusinessName],"
+- Include the exact business name as text to render
+- Style: flat design, vector style, clean, minimalist, high contrast
+- Transparent background, no gradients, no shadows, readable at small sizes"""
+        try:
+            r = claude_client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=400,
+                system=system,
+                messages=[{
+                    "role": "user",
+                    "content": f"Site description:\n{site_prompt}\n\nGenerate the logo prompt.",
+                }],
+            )
+            raw = r.content[0].text.strip()
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
+            return json.loads(raw)["prompt"]
+        except Exception as e:
+            logger.warning("Prompt logo Claude indisponible (%s) — prompt direct", e)
+            return (
+                f"Professional flat vector logo, clean, minimalist, transparent "
+                f"background, high contrast, for this business: {site_prompt[:300]}"
+            )
+
+    # ── Génération OpenAI ───────────────────────────────────────────
+
+    def generate(self, prompt: str) -> bytes:
+        import base64
+
+        r = httpx.post(
+            self.API_URL,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "gpt-image-1",
+                "prompt": prompt,
+                "size": "1024x1024",
+                "background": "transparent",
+                "output_format": "png",
+                "quality": "high",
+                "n": 1,
+            },
+            timeout=180,
+        )
+        if not r.is_success:
+            raise ConnectionError(
+                f"API OpenAI images ({r.status_code}) : {r.text[:300]}"
+            )
+        data = r.json().get("data", [])
+        if not data or not data[0].get("b64_json"):
+            raise ValueError("L'API OpenAI n'a retourné aucune image")
+        return base64.b64decode(data[0]["b64_json"])
+
+    @staticmethod
+    def fetch(url: str) -> bytes:
+        """Télécharge un logo existant fourni par URL."""
+        r = httpx.get(url, timeout=60, follow_redirects=True)
+        r.raise_for_status()
+        return r.content
+
+    # ── Redimensionnement ───────────────────────────────────────────
+
+    @staticmethod
+    def resize(img_bytes: bytes) -> dict[str, bytes]:
+        """Recadre les marges vides puis produit logo / logo@2x / favicon."""
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
+
+        # Recadrage des marges transparentes (ou uniformes) autour du logo
+        alpha = img.getchannel("A")
+        bbox = alpha.getbbox()
+        if bbox:
+            img = img.crop(bbox)
+
+        def to_png(im) -> bytes:
+            buf = io.BytesIO()
+            im.save(buf, format="PNG", optimize=True)
+            return buf.getvalue()
+
+        def fit_height(im, max_h: int):
+            if im.height <= max_h:
+                return im.copy()
+            ratio = max_h / im.height
+            return im.resize(
+                (max(1, round(im.width * ratio)), max_h), Image.LANCZOS,
+            )
+
+        # Favicon : carré 512 centré sur fond transparent
+        side = max(img.width, img.height)
+        square = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+        square.paste(img, ((side - img.width) // 2, (side - img.height) // 2))
+        favicon = square.resize((512, 512), Image.LANCZOS)
+
+        return {
+            "logo.png": to_png(fit_height(img, 160)),
+            "logo@2x.png": to_png(fit_height(img, 320)),
+            "favicon.png": to_png(favicon),
+        }
+
+    # ── Pipeline complet ────────────────────────────────────────────
+
+    def run(self, claude_client: anthropic.Anthropic, site_prompt: str,
+            ftp_cfg: dict, domain: str, logo_source_url: str = "") -> str:
+        """Génère (ou télécharge) le logo, le redimensionne, l'uploade en FTP.
+        Retourne l'URL publique du logo principal.
+        """
+        if logo_source_url:
+            logger.info("Logo fourni par URL : %s", logo_source_url)
+            raw = self.fetch(logo_source_url)
+        else:
+            prompt = self.build_prompt(claude_client, site_prompt)
+            logger.info("Génération du logo via OpenAI gpt-image-1 : %s", prompt[:80])
+            raw = self.generate(prompt)
+
+        files = self.resize(raw)
+
+        now = datetime.now()
+        ym = f"{now.year}/{now.month:02d}"
+        remote = f"{ftp_cfg['root']}/wp-content/uploads/{ym}"
+        conn = _ftp_connect(ftp_cfg)
+        try:
+            for sub in [
+                "wp-content/uploads",
+                f"wp-content/uploads/{now.year}",
+                f"wp-content/uploads/{ym}",
+            ]:
+                _ftp_mkd_safe(conn, f"{ftp_cfg['root']}/{sub}")
+            for fname, content in files.items():
+                conn.storbinary(f"STOR {remote}/{fname}", io.BytesIO(content))
+        finally:
+            conn.quit()
+
+        logo_url = f"{domain}/wp-content/uploads/{ym}/logo.png"
+        logger.info(
+            "Logo uploadé (%s) : %s — %d Ko",
+            "URL fournie" if logo_source_url else "OpenAI",
+            logo_url, len(files["logo.png"]) // 1024,
+        )
+        return logo_url
+
 
 class LogoGenerator:
     """
@@ -2239,18 +2493,31 @@ class WPGeneratorPipeline:
                 logger.error("Erreur EAT : %s", e)
                 result["errors"].append({"step": "eat", "error": str(e)})
 
-        # ── Step 6a: Generate logo (optionnel) ───────────────────
+        # ── Step 6a: Logo (optionnel) — généré par IA ou fourni par URL ──
         logo_url: str | None = None
-        if config.get("generate_logo"):
-            self._log("Etape 6a : Generation du logo", log_callback)
+        logo_source_url = (config.get("logo_url") or "").strip()
+        if config.get("generate_logo") or logo_source_url:
+            self._log("Etape 6a : Logo (generation + redimensionnement)", log_callback)
             try:
-                logo_gen = LogoGenerator(
-                    api_key=self.settings.replicate_api_token,
-                )
                 site_prompt = competitor_brief or config.get("site_prompt", "")
-                logo_url = logo_gen.run(
-                    claude_client, site_prompt, ftp_cfg, domain,
-                )
+                if logo_source_url or self.settings.openai_api_key:
+                    # OpenAI gpt-image-1 (clé « generationimage ») ou URL fournie,
+                    # avec redimensionnement propre (header / retina / favicon)
+                    logo_gen = OpenAILogoGenerator(
+                        api_key=self.settings.openai_api_key or "url-only",
+                    )
+                    logo_url = logo_gen.run(
+                        claude_client, site_prompt, ftp_cfg, domain,
+                        logo_source_url=logo_source_url,
+                    )
+                else:
+                    # Fallback historique : Ideogram via Replicate
+                    logo_gen = LogoGenerator(
+                        api_key=self.settings.replicate_api_token,
+                    )
+                    logo_url = logo_gen.run(
+                        claude_client, site_prompt, ftp_cfg, domain,
+                    )
                 result["logo_url"] = logo_url
                 result["steps_completed"].append("logo")
             except Exception as e:

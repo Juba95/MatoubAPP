@@ -212,7 +212,19 @@ def update_site(site_id: int, data: SiteUpdate, db: Session = Depends(get_db)):
     site = db.query(Site).filter(Site.id == site_id).first()
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
-    for k, v in data.model_dump(exclude_none=True).items():
+    # Changement de domaine : vérifier l'unicité (sinon IntegrityError → 500 brut)
+    if data.domain and data.domain != site.domain:
+        existing = db.query(Site).filter(Site.domain == data.domain, Site.id != site_id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Domain already exists")
+    # exclude_unset : seuls les champs réellement envoyés sont appliqués
+    # (exclude_none appliquait aussi les valeurs par défaut du modèle,
+    # ce qui réinitialisait editorial_tone / avg_article_length à chaque PUT partiel).
+    # Les chaînes vides sont ignorées : le formulaire ne permet pas de vider un champ,
+    # donc "" signifie toujours « non renseigné », jamais « effacer ».
+    for k, v in data.model_dump(exclude_unset=True).items():
+        if v is None or (isinstance(v, str) and not v.strip()):
+            continue
         setattr(site, k, v)
     db.commit()
     return {"message": "Updated"}
@@ -243,6 +255,10 @@ def delete_site(site_id: int, db: Session = Depends(get_db)):
     site = db.query(Site).filter(Site.id == site_id).first()
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
+    # SiteConfig n'a pas de cascade dans le modèle : la supprimer d'abord,
+    # sinon violation de clé étrangère (500) pour tout site configuré.
+    from app.models.site import SiteConfig
+    db.query(SiteConfig).filter(SiteConfig.site_id == site_id).delete()
     db.delete(site)
     db.commit()
     return {"message": "Deleted"}

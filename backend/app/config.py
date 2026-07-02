@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     replicate_api_token: str = ""
     semrush_api_key: str = ""
+    # Clé OpenAI (nommée « generationimage ») — utilisée pour générer le logo
+    # via gpt-image-1. À définir dans .env / variables d'environnement Coolify.
+    openai_api_key: str = ""
 
     # Google OAuth (Search Console)
     gsc_client_id: str = ""

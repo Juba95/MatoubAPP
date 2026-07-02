@@ -54,6 +54,10 @@ class FullInstallRequest(BaseModel):
     competitor_urls: list[str] = []
     # Web Archive
     use_webarchive: bool = False
+    # Logo : généré par IA (OpenAI gpt-image-1) ou repris depuis une URL,
+    # redimensionné automatiquement (header / retina / favicon)
+    generate_logo: bool = False
+    logo_url: str = ""
     # EAT
     eat_enabled: bool = True
     business_name: str = ""
@@ -104,6 +108,8 @@ def _log_for_pipeline(key: str):
             _pipeline_logs[key]["step"] = "database"
         elif "wordpress" in lower and "install" in lower:
             _pipeline_logs[key]["step"] = "wp_install"
+        elif "logo" in lower:
+            _pipeline_logs[key]["step"] = "logo"
         elif "divi" in lower or "theme" in lower:
             _pipeline_logs[key]["step"] = "theme"
         elif "contenu" in lower or "content" in lower or "generation" in lower:
@@ -211,6 +217,8 @@ def full_install(
         "et_username": req.et_username,
         "et_api_key": req.et_api_key,
         "scrape_archive": req.use_webarchive,
+        "generate_logo": req.generate_logo,
+        "logo_url": req.logo_url,
         "competitor_urls": req.competitor_urls if req.generation_mode == "concurrent" else [],
         "eat": {
             "enabled": req.eat_enabled,

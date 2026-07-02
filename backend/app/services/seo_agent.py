@@ -47,7 +47,13 @@ class SEOAgent:
                 )
                 self.db.add(kw)
             else:
-                kw.previous_position = prev_position
+                # Ne pas écraser previous_position par None quand le mot-clé
+                # n'apparaît pas dans la période précédente : on perdrait la
+                # détection des baisses au scan suivant.
+                if prev_position is not None:
+                    kw.previous_position = prev_position
+                elif kw.current_position is not None:
+                    kw.previous_position = kw.current_position
                 kw.current_position = data["position"]
                 kw.impressions = data["impressions"]
                 kw.clicks = data["clicks"]
@@ -91,31 +97,70 @@ class SEOAgent:
                 for task in tasks:
                     result_items = (task.get("result") or [])
                     for item in result_items:
-                        kw_text = item.get("keyword")
-                        volume = item.get("search_volume")
-                        info = item.get("keyword_info") or {}
-                        if volume is None:
-                            volume = info.get("search_volume")
-                        difficulty = item.get("keyword_difficulty") or item.get("competition") or info.get("competition")
+                        try:
+                            kw_text = item.get("keyword")
+                            volume = item.get("search_volume")
+                            info = item.get("keyword_info") or {}
+                            if volume is None:
+                                volume = info.get("search_volume")
+                            # DataForSEO renvoie "competition" en chaîne (HIGH/MEDIUM/LOW)
+                            # et "competition_index" en numérique (0-100)
+                            difficulty = (
+                                item.get("keyword_difficulty")
+                                or item.get("competition_index")
+                                or info.get("competition_index")
+                            )
+                            if difficulty is None:
+                                comp = item.get("competition") or info.get("competition")
+                                difficulty = {"LOW": 25, "MEDIUM": 50, "HIGH": 85}.get(
+                                    str(comp).upper()
+                                ) if comp is not None else None
 
-                        if kw_text is None:
+                            if kw_text is None:
+                                continue
+
+                            kw_obj = self.db.query(Keyword).filter(
+                                Keyword.site_id == site.id,
+                                Keyword.keyword == kw_text,
+                            ).first()
+                            if kw_obj:
+                                if volume is not None:
+                                    kw_obj.search_volume = int(volume)
+                                if difficulty is not None:
+                                    kw_obj.difficulty = float(difficulty)
+                                enriched += 1
+                        except (TypeError, ValueError):
+                            # Item malformé : on passe au suivant sans jeter le batch
                             continue
-
-                        kw_obj = self.db.query(Keyword).filter(
-                            Keyword.site_id == site.id,
-                            Keyword.keyword == kw_text,
-                        ).first()
-                        if kw_obj:
-                            if volume is not None:
-                                kw_obj.search_volume = int(volume)
-                            if difficulty is not None:
-                                kw_obj.difficulty = float(difficulty)
-                            enriched += 1
             except Exception:
                 # DataForSEO failure should not break the scan
                 continue
 
         return enriched
+
+    def _find_page_id(self, site_id: int, page_url: str) -> int | None:
+        """Retrouve la Page en BDD correspondant à une URL Search Console.
+
+        Sans ce lien, les actions OPTIMIZE créent un nouvel article au lieu
+        de mettre à jour la page qui a chuté (duplicate/cannibalisation).
+        """
+        if not page_url:
+            return None
+        clean = page_url.rstrip("/")
+        page = self.db.query(Page).filter(
+            Page.site_id == site_id,
+            Page.url.in_([page_url, clean, clean + "/"]),
+        ).first()
+        if page:
+            return page.id
+        slug = clean.split("/")[-1]
+        if slug:
+            page = self.db.query(Page).filter(
+                Page.site_id == site_id, Page.slug == slug,
+            ).first()
+            if page:
+                return page.id
+        return None
 
     def _get_search_volume(self, site_id: int, query: str, fallback_impressions: int) -> int:
         """Return search_volume from Keyword if available, else fallback to impressions."""
@@ -218,6 +263,7 @@ class SEOAgent:
                 impact = volume * abs(position_delta)
                 actions_to_create.append({
                     "action_type": ActionType.OPTIMIZE,
+                    "page_id": self._find_page_id(site.id, data["page"]),
                     "title": f"{site.name} — \"{query}\"",
                     "description": f"Position {prev['position']:.0f} → {data['position']:.0f} ({position_delta:+.0f}). Page: {data['page']}",
                     "keyword": query,
