@@ -1,6 +1,7 @@
 import csv
 import os
 import io
+import re
 import logging
 import traceback
 from datetime import datetime
@@ -13,7 +14,14 @@ from app.database import get_db
 from app.auth import get_current_user
 from app.models.action import Action, ActionType, ActionStatus
 from app.models.site import Site
-from app.services.geoloc_engine import GeolocEngine, slugify
+from app.services.geoloc_engine import (
+    GeolocEngine,
+    slugify,
+    build_jsonld,
+    parse_faq,
+    layout_seed_from,
+    replace_ville,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +116,109 @@ def safe_cell(text: str) -> str:
         cut = cut[:boundary + 1]
     logger.warning("Contenu tronqué à la limite Excel (%d caractères)", EXCEL_CELL_LIMIT)
     return cut
+
+
+YOAST_HEADERS = ["_yoast_wpseo_title", "_yoast_wpseo_metadesc", "_yoast_wpseo_focuskw"]
+
+
+def build_sitemaps_zip(site_domain: str, url_entries: list[dict]) -> bytes:
+    """Construit un zip : sitemap index + un sitemap par département + urls.txt.
+
+    Chaque entrée : {"loc": url, "lastmod": "YYYY-MM-DD", "dept": "69"}.
+    Les lastmod suivent les dates de publication étalées : Google découvre
+    le site par tranches, aligné sur le rythme de mise en ligne.
+    """
+    import zipfile
+
+    base = f"https://{site_domain.replace('https://', '').replace('http://', '').rstrip('/')}"
+    by_dept: dict[str, list[dict]] = {}
+    for e in url_entries:
+        by_dept.setdefault(e.get("dept") or "autres", []).append(e)
+
+    def urlset(entries: list[dict]) -> str:
+        lines = ['<?xml version="1.0" encoding="UTF-8"?>',
+                 '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+        for e in entries:
+            lines.append(
+                f"  <url><loc>{e['loc']}</loc><lastmod>{e['lastmod']}</lastmod>"
+                f"<changefreq>monthly</changefreq></url>"
+            )
+        lines.append("</urlset>")
+        return "\n".join(lines)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        index_lines = ['<?xml version="1.0" encoding="UTF-8"?>',
+                       '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+        for dept, entries in sorted(by_dept.items()):
+            fname = f"sitemap-geoloc-{slugify(dept)}.xml"
+            zf.writestr(fname, urlset(entries))
+            last = max(e["lastmod"] for e in entries)
+            index_lines.append(
+                f"  <sitemap><loc>{base}/{fname}</loc><lastmod>{last}</lastmod></sitemap>"
+            )
+        index_lines.append("</sitemapindex>")
+        zf.writestr("sitemap-geoloc.xml", "\n".join(index_lines))
+        zf.writestr("urls.txt", "\n".join(e["loc"] for e in url_entries))
+        zf.writestr("LISEZMOI.txt", (
+            "SITEMAPS GÉOLOC — mode d'emploi\n"
+            "================================\n"
+            f"1. Uploade tous les fichiers .xml à la racine du site ({base}/)\n"
+            "2. Déclare sitemap-geoloc.xml dans Google Search Console (Sitemaps)\n"
+            "3. Ajoute la ligne suivante à ton robots.txt :\n"
+            f"   Sitemap: {base}/sitemap-geoloc.xml\n"
+            "4. urls.txt : liste brute des URLs, à coller dans l'onglet Indexation\n"
+            "   de MatoubAPP pour la soumission IndexNow et le suivi GSC.\n"
+            "Les lastmod suivent les dates de publication étalées de l'export.\n"
+        ))
+    return buf.getvalue()
+
+
+_WORD_RE = re.compile(r"[a-zà-ÿ0-9]+")
+
+
+def _shingles(text: str, n: int = 5) -> set:
+    words = _WORD_RE.findall(text.lower())
+    return {" ".join(words[i:i + n]) for i in range(max(0, len(words) - n + 1))}
+
+
+def strip_markup(content: str) -> str:
+    """Texte brut d'un contenu (retire shortcodes Divi, balises, scripts JSON-LD)."""
+    content = re.sub(r"<script[^>]*>.*?</script>", " ", content, flags=re.DOTALL)
+    content = re.sub(r"\[[^\]]*\]", " ", content)
+    content = re.sub(r"<[^>]+>", " ", content)
+    return content
+
+
+class UniquenessTracker:
+    """Score d'unicité du contenu entre pages partageant la même variante.
+
+    En dessous de ~60 % d'unicité, Google désindexe en masse (« détectée,
+    actuellement non indexée ») — autant le savoir AVANT l'import.
+    """
+
+    def __init__(self, max_samples: int = 60):
+        self._last_by_variant: dict[int, set] = {}
+        self.similarities: list[float] = []
+        self.max_samples = max_samples
+
+    def add(self, variant_idx: int, content: str):
+        if len(self.similarities) >= self.max_samples:
+            return
+        sh = _shingles(strip_markup(content))
+        prev = self._last_by_variant.get(variant_idx)
+        if prev and sh:
+            inter = len(prev & sh)
+            union = len(prev | sh)
+            if union:
+                self.similarities.append(inter / union)
+        self._last_by_variant[variant_idx] = sh
+
+    def score(self) -> int | None:
+        """Unicité moyenne en % (100 = pages totalement différentes)."""
+        if not self.similarities:
+            return None
+        return round((1 - sum(self.similarities) / len(self.similarities)) * 100)
 
 
 def build_department_rows(
@@ -338,6 +449,7 @@ class GeolocFileRequest(BaseModel):
     use_divi: bool = False
     generate_content: bool = False  # Si True, génère le contenu via Claude (lent + coûteux)
     include_departments: bool = False  # Ajoute une page par département (Type=Département)
+    generate_sitemaps: bool = True     # Génère aussi le zip de sitemaps XML segmentés
 
 
 # Cache des fichiers générés
@@ -366,12 +478,13 @@ def generate_file(req: GeolocFileRequest, background_tasks: BackgroundTasks):
             "Ville actuelle", "SLUG", "post_title", "H1", "post_description",
             "post_content", "post_thumbnail", "post_date", "post_author",
             "post_category", "post_tag", "post_status", "Population", "Type",
-        ]
+        ] + YOAST_HEADERS
         if req.use_divi:
             headers.extend(["_et_pb_use_builder", "_et_pb_old_content"])
         ws.append(headers)
 
         today = datetime.now().strftime("%Y-%m-%d")
+        url_entries: list[dict] = []
         claude = None
         site_obj = None
 
@@ -457,19 +570,24 @@ def generate_file(req: GeolocFileRequest, background_tasks: BackgroundTasks):
                     f"[et_pb_text _builder_version='4.27.0']{content}[/et_pb_text]"
                     f"[/et_pb_column][/et_pb_row][/et_pb_section]"
                 )
+            yoast_cols = [title, meta_desc, kw]
+            if req.use_divi:
                 row = [
                     v["name"], slug_kw, title, h1, meta_desc,
                     safe_cell(divi_content), req.post_thumbnail, today, req.post_author,
                     req.post_category, tags, req.post_status,
-                    v["population"], v.get("type", "Ville"), "on", "",
-                ]
+                    v["population"], v.get("type", "Ville"),
+                ] + yoast_cols + ["on", ""]
             else:
                 row = [
                     v["name"], slug_kw, title, h1, meta_desc,
                     safe_cell(content), req.post_thumbnail, today, req.post_author,
                     req.post_category, tags, req.post_status,
                     v["population"], v.get("type", "Ville"),
-                ]
+                ] + yoast_cols
+
+            base_url = req.site_domain.replace("https://", "").replace("http://", "").rstrip("/")
+            url_entries.append({"loc": f"https://{base_url}/{slug_kw}/", "lastmod": today, "dept": v["department"]})
 
             ws.append(row)
             _generated_files[file_key]["done"] = i + 1
@@ -484,6 +602,7 @@ def generate_file(req: GeolocFileRequest, background_tasks: BackgroundTasks):
             "done": len(villes),
             "data": buffer.getvalue(),
             "filename": f"import_{req.site_domain}_{len(villes)}_pages.xlsx",
+            "sitemaps": build_sitemaps_zip(req.site_domain, url_entries) if req.generate_sitemaps else None,
         }
 
     background_tasks.add_task(run)
@@ -502,7 +621,22 @@ def file_status(file_key: str):
         "done": data.get("done", 0),
         "step": data.get("step", ""),
         "error": data.get("error", ""),
+        "uniqueness": data.get("uniqueness"),
+        "has_sitemaps": bool(data.get("sitemaps")),
     }
+
+
+@router.get("/download-sitemaps/{file_key}")
+def download_sitemaps(file_key: str):
+    """Télécharge le zip de sitemaps XML segmentés associé à un export."""
+    data = _generated_files.get(file_key)
+    if not data or data["status"] != "done" or not data.get("sitemaps"):
+        raise HTTPException(status_code=404, detail="Sitemaps non disponibles pour cet export")
+    return StreamingResponse(
+        io.BytesIO(data["sitemaps"]),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="sitemaps_{file_key}.zip"'},
+    )
 
 
 @router.get("/download/{file_key}")
@@ -570,6 +704,10 @@ class FullPipelineRequest(BaseModel):
     colors: dict = {}
     video_url: str = ""              # URL vidéo (YouTube/Vimeo) insérée dans chaque page
     include_departments: bool = False  # Ajoute une page par département (Type=Département)
+    schema_org: bool = True          # Injecte LocalBusiness/FAQPage/AggregateRating/Breadcrumb JSON-LD
+    use_paa: bool = False            # FAQ basée sur les People Also Ask réels (DataForSEO)
+    generate_sitemaps: bool = True   # Génère aussi le zip de sitemaps XML segmentés
+    vary_structure: bool = True      # Ordre des sections propre au domaine (anti-footprint)
 
 
 @router.post("/analyze-source")
@@ -678,9 +816,24 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
             state["step"] = "anchors"
             anchors = engine.generate_anchors(ctx)
 
+            # --- Step 2b: People Also Ask réels (optionnel, DataForSEO) ---
+            paa_questions: list[str] = []
+            if req.use_paa:
+                state["step"] = "paa"
+                try:
+                    from app.config import get_settings as _gs
+                    if _gs().dataforseo_login:
+                        from app.services.dataforseo import DataForSEOClient
+                        paa_questions = DataForSEOClient().get_people_also_ask(
+                            ctx.get("keyword") or req.keyword_template
+                        )
+                        logger.info("PAA récupérées : %d questions", len(paa_questions))
+                except Exception as exc:
+                    logger.warning("PAA indisponibles (%s) — FAQ générée par Claude", exc)
+
             # --- Step 3: Optimize blocks ---
             state["step"] = "blocks"
-            blocs = engine.optimize_blocks(source_text, ctx, anchors)
+            blocs = engine.optimize_blocks(source_text, ctx, anchors, paa_questions=paa_questions)
             # Les avis clients sont extraits : ils ne passent pas par les variantes
             # (rotation par ville pour l'unicité, cf. assemble_page)
             avis = blocs.pop("BLOC_AVIS", [])
@@ -711,7 +864,7 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                 "Ville actuelle", "SLUG", "post_title", "H1", "post_description",
                 "post_content", "post_thumbnail", "post_date", "post_author",
                 "post_category", "post_tag", "post_status", "Population", "Type",
-            ]
+            ] + YOAST_HEADERS
             if req.use_divi:
                 headers.extend(["_et_pb_use_builder", "_et_pb_old_content"])
             ws.append(headers)
@@ -744,9 +897,22 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                 for v in villes
             ]
 
+            # Variation de structure par domaine (anti-footprint réseau)
+            layout_seed = layout_seed_from(req.site_domain) if req.vary_structure else 0
+
+            # Index des villes par département (annuaire des pages hub)
+            cities_by_dept: dict[str, list[dict]] = {}
+            for vv in villes:
+                if vv.get("type") != "Département":
+                    cities_by_dept.setdefault(vv["department"], []).append(vv)
+
+            uniq = UniquenessTracker()
+            url_entries: list[dict] = []
+
             for i, v in enumerate(villes):
                 # Rotate variants
                 variant = variants[i % len(variants)]
+                is_dept = v.get("type") == "Département"
 
                 # Maillage interne : liens vers les 8 villes les plus proches
                 maillage = engine.generate_maillage(
@@ -763,6 +929,48 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                 for ph, val in replacements_pre.items():
                     h1_page = h1_page.replace(ph, val)
 
+                # Pages hub (département) : annuaire de toutes leurs communes.
+                # Pages villes : lien remontant vers leur page département.
+                extra_html = ""
+                dept_name = DEPT_NAMES.get(v["department"], v["department"])
+                dept_slug = f"{slug_base}-{slugify(dept_name)}"
+                if is_dept:
+                    dept_cities = cities_by_dept.get(v["department"], [])
+                    if dept_cities:
+                        links = "".join(
+                            f'<li><a href="/{slug_base}-{c["slug"]}/">'
+                            f'{ctx.get("keyword", "").capitalize()} {c["name"]}</a></li>'
+                            for c in dept_cities
+                        )
+                        extra_html = (
+                            f"<h2>Nos interventions dans les communes de {v['name']}</h2>"
+                            f'<ul class="annuaire-communes" style="columns:3;column-gap:24px">{links}</ul>'
+                        )
+                elif req.include_departments:
+                    extra_html = (
+                        f"<p>Découvrez aussi notre page départementale : "
+                        f'<a href="/{dept_slug}/">{ctx.get("keyword", "").capitalize()} {dept_name}</a></p>'
+                    )
+
+                # Schema.org JSON-LD (LocalBusiness+Rating, FAQPage, Breadcrumb)
+                jsonld = ""
+                if req.schema_org:
+                    faq_pairs = parse_faq(replace_ville(str(variant.get("BLOC_FAQ", "")), v["name"]))
+                    breadcrumb = [("Accueil", "/")]
+                    if req.include_departments and not is_dept:
+                        breadcrumb.append((dept_name, f"/{dept_slug}/"))
+                    breadcrumb.append((v["name"], f"/{slug_base}-{v['slug']}/"))
+                    jsonld = build_jsonld(
+                        site_name=req.site_name,
+                        site_domain=req.site_domain,
+                        keyword=ctx.get("keyword", ""),
+                        ville={**villes_engine[i], "postal_code": v.get("postal_code", ""),
+                               "type": v.get("type", "Ville")},
+                        faq_pairs=faq_pairs,
+                        avis=engine.render_avis(avis, start=i, count=6),
+                        breadcrumb=breadcrumb,
+                    )
+
                 # Assemble content
                 content = engine.assemble_page(
                     blocs=variant,
@@ -776,7 +984,11 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                     h1=h1_page,
                     video_url=req.video_url,
                     avis=avis,
+                    layout_seed=layout_seed,
+                    jsonld=jsonld,
+                    extra_html=extra_html,
                 )
+                uniq.add(i % len(variants), content)
 
                 # Build metadata — supporte __VILLE__ (moteur) et {ville} (legacy)
                 replacements = {
@@ -805,9 +1017,12 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                     safe_cell(content), req.post_thumbnail, today, req.post_author,
                     req.post_category, tags, req.post_status,
                     v["population"], v.get("type", "Ville"),
-                ]
+                ] + [title, meta_desc, keyword if is_dept else f"{keyword} {v['name']}"]
                 if req.use_divi:
                     row.extend(["on", ""])
+
+                base_url = req.site_domain.replace("https://", "").replace("http://", "").rstrip("/")
+                url_entries.append({"loc": f"https://{base_url}/{slug}/", "lastmod": today, "dept": v["department"]})
 
                 ws.append(row)
                 state["done"] = i + 1
@@ -827,6 +1042,8 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                 "filename": f"adv_import_{req.site_domain}_{len(villes)}_pages.xlsx",
                 "ctx": ctx,
                 "nb_variants": len(variants),
+                "uniqueness": uniq.score(),
+                "sitemaps": build_sitemaps_zip(req.site_domain, url_entries) if req.generate_sitemaps else None,
             }
 
         except Exception as exc:

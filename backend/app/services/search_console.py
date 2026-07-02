@@ -12,12 +12,14 @@ class SearchConsoleClient:
     API_URL = "https://www.googleapis.com/webmasters/v3"
     SEARCHANALYTICS_URL = "https://searchconsole.googleapis.com/webmasters/v3"
 
+    URL_INSPECTION_URL = "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect"
+
     def __init__(self, site: Site, proxy_url: str | None = None):
         self.token_data = json.loads(site.sc_token_json) if site.sc_token_json else None
         self.proxy_url = proxy_url or None
         # Utiliser sc_property si défini, sinon construire depuis le domaine
         if hasattr(site, 'sc_property') and site.sc_property:
-            self.site_url = quote(site.sc_property, safe='')
+            self.raw_property = site.sc_property
         else:
             domain = site.domain.strip()
             for prefix in ("https://", "http://"):
@@ -26,7 +28,8 @@ class SearchConsoleClient:
             if domain.startswith("www."):
                 domain = domain[4:]
             domain = domain.rstrip("/")
-            self.site_url = quote(f"sc-domain:{domain}", safe='')
+            self.raw_property = f"sc-domain:{domain}"
+        self.site_url = quote(self.raw_property, safe='')
 
     def _get_access_token(self) -> str:
         """Refresh le token OAuth"""
@@ -149,6 +152,29 @@ class SearchConsoleClient:
             return {"indexed": count, "submitted": 0, "source": "analytics_fallback"}
         except Exception:
             return {"indexed": 0, "submitted": 0, "source": "error"}
+
+    def inspect_url(self, url: str) -> dict:
+        """Statut d'indexation d'une URL via l'URL Inspection API (quota ~2000/jour).
+
+        Retourne : {url, verdict, coverage_state, last_crawl, indexed}.
+        """
+        with self._client() as client:
+            resp = client.post(self.URL_INSPECTION_URL, json={
+                "inspectionUrl": url,
+                "siteUrl": self.raw_property,
+                "languageCode": "fr-FR",
+            })
+            resp.raise_for_status()
+            result = resp.json().get("inspectionResult", {})
+        idx = result.get("indexStatusResult", {})
+        verdict = idx.get("verdict", "VERDICT_UNSPECIFIED")
+        return {
+            "url": url,
+            "verdict": verdict,
+            "coverage_state": idx.get("coverageState", ""),
+            "last_crawl": idx.get("lastCrawlTime", ""),
+            "indexed": verdict == "PASS",
+        }
 
     def list_properties(self) -> list[dict]:
         """Liste toutes les propriétés Search Console du compte connecté."""

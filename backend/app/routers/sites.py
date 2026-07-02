@@ -230,6 +230,61 @@ def update_site(site_id: int, data: SiteUpdate, db: Session = Depends(get_db)):
     return {"message": "Updated"}
 
 
+@router.post("/{site_id}/refresh-pages")
+def refresh_pages(site_id: int, count: int = 5, db: Session = Depends(get_db)):
+    """Rafraîchissement de contenu : crée des actions OPTIMIZE pour les N pages
+    les plus anciennes du site (fraîcheur SEO — relance le crawl des pages
+    dormantes). Les actions passent par la file de validation habituelle.
+    """
+    from sqlalchemy import asc
+    from app.models.action import ActionType
+
+    site = db.query(Site).filter(Site.id == site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if not site.wp_username or not site.wp_app_password:
+        raise HTTPException(status_code=400, detail="Credentials WordPress non configurés")
+
+    count = max(1, min(count, 25))
+    pages = (
+        db.query(Page)
+        .filter(Page.site_id == site_id, Page.wp_post_id.isnot(None))
+        .order_by(asc(Page.updated_at).nullsfirst(), asc(Page.created_at))
+        .limit(count * 2)
+        .all()
+    )
+
+    created = 0
+    for page in pages:
+        if created >= count:
+            break
+        existing = db.query(Action).filter(
+            Action.site_id == site_id,
+            Action.page_id == page.id,
+            Action.status.in_([ActionStatus.PENDING, ActionStatus.VALIDATED, ActionStatus.EXECUTING]),
+        ).first()
+        if existing:
+            continue
+        db.add(Action(
+            site_id=site_id,
+            page_id=page.id,
+            action_type=ActionType.OPTIMIZE,
+            status=ActionStatus.PENDING,
+            title=f"{site.name} — rafraîchissement « {page.title or page.slug} »",
+            keyword=(page.meta_title or page.title or page.slug or "").strip()[:200],
+            description=f"Rafraîchissement de contenu programmé (fraîcheur SEO). Page: {page.url}",
+            impact_score=10,
+            estimated_api_cost=0.04,
+        ))
+        created += 1
+    db.commit()
+    return {
+        "message": f"{created} actions de rafraîchissement créées — valide-les dans la file (Overview)",
+        "created": created,
+        "no_pages": len(pages) == 0,
+    }
+
+
 @router.get("/{site_id}/debug-index")
 def debug_index(site_id: int, db: Session = Depends(get_db)):
     """Debug : voir ce que l'API sitemaps renvoie pour ce site"""

@@ -61,6 +61,124 @@ def replace_ville(html: str, ville: str) -> str:
     return re.sub(r"__VILLE__", ville, html, flags=re.IGNORECASE)
 
 
+def parse_faq(html: str) -> list[tuple[str, str]]:
+    """Extrait les paires question/réponse d'un bloc FAQ (H3 = question, <p> = réponse)."""
+    if not html:
+        return []
+    pairs = []
+    chunks = re.split(r"<h3[^>]*>", html)
+    for chunk in chunks[1:]:
+        m = re.match(r"(.*?)</h3>(.*)", chunk, re.DOTALL)
+        if not m:
+            continue
+        question = re.sub(r"<[^>]+>", "", m.group(1)).strip()
+        answer = re.sub(r"<[^>]+>", " ", m.group(2))
+        answer = re.sub(r"\s+", " ", answer).strip()
+        if question and answer:
+            pairs.append((question, answer[:800]))
+    return pairs
+
+
+def build_jsonld(
+    site_name: str,
+    site_domain: str,
+    keyword: str,
+    ville: dict,
+    faq_pairs: list[tuple[str, str]] | None = None,
+    avis: list[dict] | None = None,
+    breadcrumb: list[tuple[str, str]] | None = None,
+) -> str:
+    """Construit les blocs Schema.org JSON-LD d'une page géolocalisée.
+
+    Génère LocalBusiness (+AggregateRating), FAQPage et BreadcrumbList —
+    c'est ce qui déclenche les rich snippets (étoiles, FAQ dépliée) en SERP.
+    """
+    base = f"https://{site_domain.replace('https://', '').replace('http://', '').rstrip('/')}"
+    schemas = []
+
+    business: dict = {
+        "@context": "https://schema.org",
+        "@type": "LocalBusiness",
+        "name": site_name,
+        "url": base,
+        "description": f"{keyword.capitalize()} à {ville.get('nom', '')}",
+        "areaServed": {
+            "@type": "City" if ville.get("type") != "Département" else "AdministrativeArea",
+            "name": ville.get("nom", ""),
+        },
+    }
+    if ville.get("postal_code"):
+        business["address"] = {
+            "@type": "PostalAddress",
+            "postalCode": ville["postal_code"],
+            "addressLocality": ville.get("nom", ""),
+            "addressCountry": "FR",
+        }
+    if ville.get("lat") and ville.get("lon"):
+        business["geo"] = {
+            "@type": "GeoCoordinates",
+            "latitude": ville["lat"],
+            "longitude": ville["lon"],
+        }
+    if avis:
+        notes = []
+        for a in avis:
+            try:
+                notes.append(max(1, min(5, int(a.get("note", 5)))))
+            except (TypeError, ValueError):
+                notes.append(5)
+        business["aggregateRating"] = {
+            "@type": "AggregateRating",
+            "ratingValue": round(sum(notes) / len(notes), 1),
+            "reviewCount": len(notes),
+            "bestRating": 5,
+        }
+    schemas.append(business)
+
+    if faq_pairs:
+        schemas.append({
+            "@context": "https://schema.org",
+            "@type": "FAQPage",
+            "mainEntity": [
+                {
+                    "@type": "Question",
+                    "name": q,
+                    "acceptedAnswer": {"@type": "Answer", "text": a},
+                }
+                for q, a in faq_pairs
+            ],
+        })
+
+    if breadcrumb:
+        schemas.append({
+            "@context": "https://schema.org",
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+                {
+                    "@type": "ListItem",
+                    "position": i + 1,
+                    "name": name,
+                    "item": f"{base}{path}",
+                }
+                for i, (name, path) in enumerate(breadcrumb)
+            ],
+        })
+
+    return "\n".join(
+        '<script type="application/ld+json">'
+        + json.dumps(s, ensure_ascii=False)
+        + "</script>"
+        for s in schemas
+    )
+
+
+def layout_seed_from(domain: str) -> int:
+    """Graine déterministe par domaine — chaque site du réseau a son propre
+    ordre de sections (anti-footprint), stable d'un export à l'autre."""
+    import zlib
+    return zlib.crc32(domain.strip().lower().encode())
+
+
 def scrape_page(url: str, timeout: float = 15.0) -> dict:
     """Telecharge une URL et en extrait titre, H1, H2s et contenu texte."""
     headers = {
@@ -247,10 +365,20 @@ Reponds avec un tableau JSON de 6 strings, rien d'autre."""
     # 3. Decoupage et optimisation en blocs
     # ------------------------------------------------------------------
 
-    def optimize_blocks(self, source_text: str, ctx: dict, anchors: list[str]) -> dict:
+    def optimize_blocks(
+        self,
+        source_text: str,
+        ctx: dict,
+        anchors: list[str],
+        paa_questions: Optional[list[str]] = None,
+    ) -> dict:
         """
         Decoupe et optimise le contenu source en 6 blocs :
-        BLOC_INTRO, BLOC_H2_1 .. BLOC_H2_4, BLOC_FAQ.
+        BLOC_INTRO, BLOC_H2_1 .. BLOC_H2_4, BLOC_FAQ (+ BLOC_AVIS).
+
+        Si *paa_questions* est fourni (People Also Ask réels de Google),
+        la FAQ reprend ces questions mot pour mot — meilleure chance de
+        featured snippet / position 0.
         """
         system = (
             "Tu es un redacteur SEO expert en contenu geolocalisé. "
@@ -259,6 +387,14 @@ Reponds avec un tableau JSON de 6 strings, rien d'autre."""
             "Reponds exclusivement en JSON valide."
         )
         anchors_str = "\n".join(f"- {a}" for a in anchors)
+        paa_block = ""
+        if paa_questions:
+            paa_block = (
+                "\n\nQUESTIONS RÉELLES GOOGLE (People Also Ask) — le BLOC_FAQ doit "
+                "reprendre EXACTEMENT ces questions comme H3 (mot pour mot), avec des "
+                "réponses concises de 40-60 mots optimisées featured snippet :\n"
+                + "\n".join(f"- {q}" for q in paa_questions[:8])
+            )
 
         user_prompt = f"""A partir du texte source et du contexte ci-dessous, genere 6 blocs de contenu HTML.
 
@@ -269,7 +405,7 @@ CONTEXTE :
 - Contexte metier : {ctx.get("contexte_metier", "")}
 
 ANCRES DE MAILLAGE (a integrer naturellement, 1 ou 2 par bloc) :
-{anchors_str}
+{anchors_str}{paa_block}
 
 TEXTE SOURCE :
 {source_text[:6000]}
@@ -504,10 +640,18 @@ Reponds uniquement avec le JSON."""
         h1: str = "",
         video_url: str = "",
         avis: Optional[list] = None,
+        layout_seed: int = 0,
+        jsonld: str = "",
+        extra_html: str = "",
     ) -> str:
         """
         Assemble les blocs, le maillage, les images, les avis clients et la
         vidéo en une page HTML complete (ou en shortcodes Divi si *use_divi*).
+
+        *layout_seed* fait varier l'ordre des sections (anti-footprint réseau),
+        *jsonld* est ajouté en fin de contenu (Schema.org), *extra_html* permet
+        d'injecter une section supplémentaire (ex: annuaire des villes d'un
+        département sur les pages hub).
 
         *ville* doit contenir au minimum ``{"nom": "Paris"}``.
         """
@@ -538,16 +682,33 @@ Reponds uniquement avec le JSON."""
         zone_label = ville.get("zone_label") or nom_ville
 
         if use_divi:
-            return self._wrap_divi(
+            content = self._wrap_divi(
                 page_blocs, maillage, images, colors,
                 h1=h1, video_url=video_url, avis=selected_avis,
                 keyword=keyword, zone_label=zone_label,
+                layout_seed=layout_seed, extra_html=extra_html,
             )
-        return self._wrap_html(
-            page_blocs, maillage, images,
-            h1=h1, video_url=video_url, avis=selected_avis,
-            keyword=keyword, zone_label=zone_label,
-        )
+        else:
+            content = self._wrap_html(
+                page_blocs, maillage, images,
+                h1=h1, video_url=video_url, avis=selected_avis,
+                keyword=keyword, zone_label=zone_label,
+                layout_seed=layout_seed, extra_html=extra_html,
+            )
+        if jsonld:
+            content += "\n" + jsonld
+        return content
+
+    # Ordres de sections possibles (déterminés par layout_seed) : chaque site
+    # du réseau assemble FAQ / maillage / avis / vidéo dans un ordre différent.
+    TAIL_ORDERS = [
+        ("faq", "maillage", "avis", "video"),
+        ("faq", "avis", "maillage", "video"),
+        ("avis", "faq", "maillage", "video"),
+        ("faq", "video", "avis", "maillage"),
+        ("maillage", "faq", "avis", "video"),
+        ("avis", "video", "faq", "maillage"),
+    ]
 
     # --- assemblage HTML simple -------------------------------------------
 
@@ -587,6 +748,8 @@ Reponds uniquement avec le JSON."""
         avis: Optional[list[dict]] = None,
         keyword: str = "",
         zone_label: str = "",
+        layout_seed: int = 0,
+        extra_html: str = "",
     ) -> str:
         parts: list[str] = []
 
@@ -609,28 +772,32 @@ Reponds uniquement avec le JSON."""
                     f'<figure><img src="{images[i]}" alt="{keyword} {zone_label}" loading="lazy" /></figure>'
                 )
 
+        if extra_html:
+            parts.append(extra_html)
+
+        # Sections de fin dans un ordre propre à chaque site (layout_seed)
+        tail: dict[str, str] = {}
         if "BLOC_FAQ" in blocs:
-            parts.append(blocs["BLOC_FAQ"])
-
+            tail["faq"] = blocs["BLOC_FAQ"]
         if maillage:
-            parts.append('<div class="maillage-section">')
-            parts.append(
+            tail["maillage"] = (
+                '<div class="maillage-section">\n'
                 f"<p style='text-align:center;font-weight:700;font-size:16px;margin-bottom:14px'>"
-                f"Retrouvez <strong>{keyword}</strong> autour de {zone_label}</p>"
+                f"Retrouvez <strong>{keyword}</strong> autour de {zone_label}</p>\n"
+                f"{maillage}\n</div>"
             )
-            parts.append(maillage)
-            parts.append("</div>")
-
         avis_html = self._avis_html(avis or [])
         if avis_html:
-            parts.append(avis_html)
-
+            tail["avis"] = avis_html
         if video_url:
-            parts.append(
+            tail["video"] = (
                 f'<div class="video-section" style="text-align:center">'
                 f'<iframe width="560" height="315" src="{video_url}" frameborder="0" '
                 f'allowfullscreen loading="lazy"></iframe></div>'
             )
+        for section in self.TAIL_ORDERS[layout_seed % len(self.TAIL_ORDERS)]:
+            if section in tail:
+                parts.append(tail[section])
 
         return "\n\n".join(p for p in parts if p)
 
@@ -647,10 +814,13 @@ Reponds uniquement avec le JSON."""
         avis: Optional[list[dict]] = None,
         keyword: str = "",
         zone_label: str = "",
+        layout_seed: int = 0,
+        extra_html: str = "",
     ) -> str:
         """Layout Divi riche, calqué sur le fichier d'import de référence :
         H1 stylé, sections texte/image alternées (2 colonnes), FAQ, maillage
-        titré, avis clients en cartes, vidéo, CTA final.
+        titré, avis clients en cartes, vidéo, CTA final. L'ordre des sections
+        de fin varie selon *layout_seed* (anti-footprint).
         """
         primary = colors.get("primary", "#2EA3F2")
         secondary = colors.get("secondary", "#E02B20")
@@ -714,21 +884,30 @@ Reponds uniquement avec le JSON."""
         # Intro pleine largeur
         parts.append(text_section(blocs.get("BLOC_INTRO", "")))
 
-        # Blocs H2 : alternance texte/image en 2 colonnes quand une image existe
+        # Blocs H2 : alternance texte/image en 2 colonnes quand une image existe.
+        # La parité du côté image dépend du layout_seed (anti-footprint).
         bg_alt = ["#FFFFFF", "#F7F9FB", "#FFFFFF", "#F7F9FB"]
+        side_flip = (layout_seed >> 3) & 1
         for i in range(1, 5):
             key = f"BLOC_H2_{i}"
             if key not in blocs:
                 continue
             img = images[(i - 1) % len(images)] if images else ""
             if img:
-                parts.append(two_col_section(blocs[key], img, img_left=(i % 2 == 0), bg=bg_alt[i - 1]))
+                parts.append(two_col_section(blocs[key], img, img_left=((i + side_flip) % 2 == 0), bg=bg_alt[i - 1]))
             else:
                 parts.append(text_section(blocs[key], bg_alt[i - 1]))
 
+        # Section supplémentaire (ex: annuaire des villes sur les pages département)
+        if extra_html:
+            parts.append(text_section(extra_html, "#FFFFFF"))
+
+        # Sections de fin dans un ordre propre à chaque site (layout_seed)
+        tail: dict[str, str] = {}
+
         # FAQ
         if "BLOC_FAQ" in blocs:
-            parts.append(text_section(blocs["BLOC_FAQ"], "#F0F4F8"))
+            tail["faq"] = text_section(blocs["BLOC_FAQ"], "#F0F4F8")
 
         # Maillage interne titré
         if maillage:
@@ -736,7 +915,7 @@ Reponds uniquement avec le JSON."""
                 f"<p style='text-align:center;font-weight:700;font-size:16px;margin-bottom:14px'>"
                 f"Retrouvez <strong>{keyword}</strong> autour de {zone_label}</p>"
             )
-            parts.append(text_section(f"{titre}\n{maillage}", "#EAF2E3"))
+            tail["maillage"] = text_section(f"{titre}\n{maillage}", "#EAF2E3")
 
         # Avis clients en cartes (3 colonnes max par rangée)
         if avis:
@@ -774,14 +953,14 @@ Reponds uniquement avec le JSON."""
                     f"[et_pb_row column_structure='1_3,1_3,1_3' _builder_version='4.27.0' "
                     f"max_width='960px' column_padding_mobile='on']{cols}[/et_pb_row]"
                 )
-            parts.append(
+            tail["avis"] = (
                 f"[et_pb_section _builder_version='4.27.0' background_color='#F7F9FB' "
                 f"custom_padding='40px|0px|40px|0px|false|false']{header}{''.join(cards_rows)}[/et_pb_section]"
             )
 
         # Vidéo
         if video_url:
-            parts.append(
+            tail["video"] = (
                 f"[et_pb_section _builder_version='4.27.0' background_color='#FFFFFF' "
                 f"custom_padding='30px|0px|30px|0px|false|false']"
                 f"[et_pb_row _builder_version='4.27.0' max_width='960px']"
@@ -790,6 +969,10 @@ Reponds uniquement avec le JSON."""
                 f"max_width='720px' module_alignment='center'][/et_pb_video]"
                 f"[/et_pb_column][/et_pb_row][/et_pb_section]"
             )
+
+        for section in self.TAIL_ORDERS[layout_seed % len(self.TAIL_ORDERS)]:
+            if section in tail:
+                parts.append(tail[section])
 
         # CTA final
         cta = (

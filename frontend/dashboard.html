@@ -112,13 +112,15 @@ header{display:flex;justify-content:space-between;align-items:center;margin-bott
 <button class="tab" onclick="switchTab(1,this)">Analyse IA / GEO</button>
 <button class="tab" onclick="switchTab(2,this)">Générateur WP</button>
 <button class="tab" onclick="switchTab(3,this)">Pages Géoloc</button>
-<button class="tab" onclick="switchTab(4,this)">Paramètres</button>
+<button class="tab" onclick="switchTab(4,this)">Indexation</button>
+<button class="tab" onclick="switchTab(5,this)">Paramètres</button>
 </div>
 <div id="tab-0"></div>
 <div id="tab-1" class="hidden"></div>
 <div id="tab-2" class="hidden"></div>
 <div id="tab-3" class="hidden"></div>
 <div id="tab-4" class="hidden"></div>
+<div id="tab-5" class="hidden"></div>
 </div>
 </div>
 
@@ -140,6 +142,22 @@ if(!r.ok){const txt=await r.text().catch(()=>'');console.error('[API] Error body
 return r.json();
 }
 // Téléchargement authentifié (le header Authorization ne passe pas via un simple <a href>)
+async function downloadAuth(path,fallbackName){
+const h={};if(TOKEN)h['Authorization']='Bearer '+TOKEN;
+try{
+const r=await fetch(API+path,{headers:h});
+if(!r.ok){const txt=await r.text().catch(()=>'');let msg;try{msg=JSON.parse(txt).detail||txt;}catch{msg=txt||r.statusText;}throw new Error(msg);}
+const blob=await r.blob();
+const cd=r.headers.get('Content-Disposition')||'';
+const m=cd.match(/filename="?([^";]+)"?/);
+const a=document.createElement('a');
+a.href=URL.createObjectURL(blob);
+a.download=m?m[1]:fallbackName;
+document.body.appendChild(a);a.click();a.remove();
+setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+}catch(e){alert('Téléchargement impossible : '+e.message);}
+}
+function downloadSitemaps(fileKey){downloadAuth('/geoloc/download-sitemaps/'+encodeURIComponent(fileKey),'sitemaps.zip');}
 async function downloadGeoFile(fileKey){
 const h={};if(TOKEN)h['Authorization']='Bearer '+TOKEN;
 try{
@@ -189,12 +207,13 @@ loadOverview();
 function switchTab(n,el){
 document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
 el.classList.add('active');
-for(let i=0;i<5;i++)document.getElementById('tab-'+i).classList.toggle('hidden',i!==n);
+for(let i=0;i<6;i++)document.getElementById('tab-'+i).classList.toggle('hidden',i!==n);
 if(n===0)loadOverview();
 if(n===1)loadGEO();
 if(n===2)loadGenerator();
 if(n===3)loadGeoloc();
-if(n===4)loadSettings();
+if(n===4)loadIndexation();
+if(n===5)loadSettings();
 }
 
 // OVERVIEW
@@ -453,6 +472,7 @@ panel.innerHTML=`<div class="cfg-panel">
 <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
 <button class="btn2 btn-sm" onclick="event.stopPropagation();testWP(${id})">Tester WP</button>
 <button class="btn2 btn-sm" onclick="event.stopPropagation();scanSite(${id})">Scanner SEO</button>
+<button class="btn2 btn-sm" onclick="event.stopPropagation();refreshSitePages(${id})">Rafraîchir contenu</button>
 <button class="btn2 btn-sm btn-danger" onclick="event.stopPropagation();if(confirm('Supprimer ce site ?'))deleteSite(${id})">Supprimer</button>
 </div>
 <div id="cfg-msg-${id}" style="margin-bottom:10px;font-size:12px;min-height:16px"></div>
@@ -556,6 +576,16 @@ else{msgEl.style.color='var(--danger)';msgEl.textContent='\u2717 '+(res.error||'
 }catch(e){msgEl.style.color='var(--danger)';msgEl.textContent='\u2717 '+e.message;}
 }
 
+async function refreshSitePages(id){
+const msgEl=document.getElementById('cfg-msg-'+id);
+msgEl.style.color='var(--muted)';
+msgEl.textContent='Création des actions de rafraîchissement...';
+try{
+const res=await apiFetch('/sites/'+id+'/refresh-pages?count=5',{method:'POST'});
+msgEl.style.color=res.created?'var(--success)':'var(--warn)';
+msgEl.textContent=res.no_pages?'Aucune page connue pour ce site (les pages WP All Import ne sont pas suivies en BDD)':'✓ '+res.message;
+}catch(e){msgEl.style.color='var(--danger)';msgEl.textContent='Erreur : '+e.message;}
+}
 async function scanSite(id){
 const msgEl=document.getElementById('cfg-msg-'+id);
 msgEl.style.color='var(--muted)';
@@ -1630,6 +1660,11 @@ const stepNum=`style="display:inline-flex;align-items:center;justify-content:cen
 const stepTitle=`style="font-size:13px;font-weight:600;letter-spacing:-.2px"`;
 const chevron=`style="font-size:16px;color:var(--muted);transition:transform .2s"`;
 const chkLabel=`style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text)"`;
+const geoOptCard=(id,title,desc,checked)=>`<label style="display:flex;gap:10px;align-items:flex-start;padding:12px 14px;background:var(--card2);border:1px solid ${checked?'var(--accent)':'var(--border)'};border-radius:10px;cursor:pointer;transition:border-color .15s">
+<input type="checkbox" id="${id}"${checked?' checked':''} style="width:auto;margin-top:2px;accent-color:var(--accent)" onchange="this.closest('label').style.borderColor=this.checked?'var(--accent)':'var(--border)'">
+<span style="min-width:0"><span style="display:block;font-size:12.5px;font-weight:700;color:var(--text);text-transform:none;letter-spacing:0;margin-bottom:3px">${title}</span>
+<span style="display:block;font-size:11px;line-height:1.5;color:var(--muted);text-transform:none;letter-spacing:0;font-weight:400">${desc}</span></span>
+</label>`;
 
 let h=`<div class="section-title mb-12">Pages g\u00e9olocalis\u00e9es</div>`;
 
@@ -1695,21 +1730,34 @@ h+=`<div ${stepStyle}>
 <span class="geo-chevron" ${chevron}>\u25BC</span>
 </div>
 <div id="geo-step3-body" ${stepBody}>
-<div class="grid2 mb-16">
+<div class="accent-title" style="margin-bottom:10px">Publication WordPress</div>
+<div class="mb-16" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
 <div><label>Auteur WP</label><input id="geo-author" value="admin"></div>
-<div><label>Cat\u00e9gorie</label><input id="geo-category" placeholder="services"></div>
-<div><label>Image \u00e0 la une (URL)</label><input id="geo-thumbnail" placeholder="https://..."></div>
+<div><label>Catégorie</label><input id="geo-category" placeholder="services"></div>
+<div><label>Image à la une (URL)</label><input id="geo-thumbnail" placeholder="https://..."></div>
 <div><label>Statut</label><select id="geo-post-status"><option value="draft">Brouillon (draft)</option><option value="publish">Publié (publish)</option></select></div>
 </div>
-<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;margin-top:4px">
-<label ${chkLabel}><input type="checkbox" id="geo-divi"> Format Divi Builder</label>
-<label ${chkLabel}><input type="checkbox" id="geo-ai-content"> G\u00e9n\u00e9rer contenu IA (Claude)</label>
-<label ${chkLabel}><input type="checkbox" id="geo-concurrence"> Analyse concurrentielle</label>
-<label ${chkLabel}><input type="checkbox" id="geo-departements"> Pages d\u00e9partements</label>
+
+<div class="accent-title" style="margin-bottom:10px">Contenu &amp; format</div>
+<div class="mb-16" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px">
+${geoOptCard('geo-ai-content','Contenu IA (Claude)','Blocs SEO optimisés, variantes anti-duplicate et maillage — depuis votre texte source ou 100% IA.',false)}
+${geoOptCard('geo-divi','Format Divi Builder','Layout riche : H1 stylé, sections texte/image alternées, avis ★, FAQ, CTA.',false)}
+${geoOptCard('geo-departements','Pages départements','Une page hub par département avec l\'annuaire de toutes ses communes (silo SEO).',false)}
+${geoOptCard('geo-paa','FAQ depuis Google (PAA)','La FAQ reprend mot pour mot les « Autres questions posées » réelles de Google (DataForSEO).',false)}
+${geoOptCard('geo-concurrence','Analyse concurrentielle','Enrichit le contenu avec les thèmes couverts par les URLs concurrentes du brief.',false)}
 </div>
+
+<div class="accent-title" style="margin-bottom:10px">SEO &amp; indexation</div>
+<div class="mb-16" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px">
+${geoOptCard('geo-schema','Schema.org JSON-LD','LocalBusiness + FAQPage + avis ★ + fil d\'Ariane dans chaque page → rich snippets en SERP.',true)}
+${geoOptCard('geo-sitemaps','Sitemaps XML segmentés','Sitemap index + un sitemap par département, en zip prêt à uploader (indexation de masse).',true)}
+${geoOptCard('geo-vary','Anti-footprint réseau','L\'ordre des sections varie selon le domaine : chaque site du réseau a sa propre structure.',true)}
+</div>
+
+<div class="accent-title" style="margin-bottom:10px">Réglages</div>
 <div class="grid2 mb-16">
-<div><label>Nombre de variantes</label><input type="number" id="geo-variantes" min="1" max="5" value="1"></div>
-<div><label>URL vid\u00e9o YouTube/Vimeo (optionnel)</label><input id="geo-video" placeholder="https://www.youtube.com/watch?v=..."></div>
+<div><label>Nombre de variantes <span style="font-weight:400;text-transform:none;letter-spacing:0">(anti-duplicate — 3 recommandé)</span></label><input type="number" id="geo-variantes" min="1" max="5" value="3"></div>
+<div><label>URL vidéo YouTube/Vimeo (optionnel)</label><input id="geo-video" placeholder="https://www.youtube.com/watch?v=..."></div>
 </div>
 <div style="margin-top:4px">
 <div ${stepHead} onclick="geoToggleStep('geo-colors-body',this)" style="padding:10px 16px;background:var(--card2);border-radius:8px;margin-bottom:0">
@@ -1842,6 +1890,10 @@ post_thumbnail:document.getElementById('geo-thumbnail').value||'',
 min_population:Number(document.getElementById('geo-pop').value),
 use_divi:document.getElementById('geo-divi').checked,
 include_departments:document.getElementById('geo-departements').checked,
+schema_org:document.getElementById('geo-schema').checked,
+use_paa:document.getElementById('geo-paa').checked,
+generate_sitemaps:document.getElementById('geo-sitemaps').checked,
+vary_structure:document.getElementById('geo-vary').checked,
 video_url:document.getElementById('geo-video').value.trim(),
 nb_variants:Number(document.getElementById('geo-variantes').value)||1,
 source_text:document.getElementById('geo-source-text').value||'',
@@ -1886,7 +1938,7 @@ const step5=document.getElementById('geo-step5-body');
 if(step5&&step5.classList.contains('hidden')){step5.classList.remove('hidden');step5.style.display='';}
 }
 
-const GEO_STEP_LABELS={init:'Initialisation',analyze:'Analyse du texte source (Claude)',anchors:'G\u00e9n\u00e9ration des ancres de maillage',blocks:'Optimisation des blocs SEO',competitors:'Analyse concurrentielle',variants:'G\u00e9n\u00e9ration des variantes',assemble:'Assemblage des pages',saving:'Sauvegarde du fichier',done:'Termin\u00e9'};
+const GEO_STEP_LABELS={init:'Initialisation',analyze:'Analyse du texte source (Claude)',anchors:'G\u00e9n\u00e9ration des ancres de maillage',paa:'Questions Google (People Also Ask)',blocks:'Optimisation des blocs SEO',competitors:'Analyse concurrentielle',variants:'G\u00e9n\u00e9ration des variantes',assemble:'Assemblage des pages',saving:'Sauvegarde du fichier',done:'Termin\u00e9'};
 
 async function generateFile(){
 const domain=document.getElementById('geoloc-domain').value.trim();
@@ -1916,6 +1968,7 @@ keyword_template:full.keyword_template,site_name:full.site_name,site_domain:full
 post_author:full.post_author,post_category:full.post_category,post_status:full.post_status,
 post_thumbnail:full.post_thumbnail,min_population:full.min_population,use_divi:full.use_divi,
 include_departments:full.include_departments,
+generate_sitemaps:full.generate_sitemaps,
 generate_content:false,
 ...(full.regions&&{regions:full.regions}),...(full.departments&&{departments:full.departments}),
 })});
@@ -1941,7 +1994,10 @@ clearInterval(poll);
 progressBar.style.width='100%';
 progressLabel.textContent='Termin\u00e9 !';
 progressCount.textContent=`${st.total}/${st.total}`;
-statusEl.innerHTML=`<div class="card result-box" style="margin-top:12px"><div class="result-msg">${total} pages g\u00e9n\u00e9r\u00e9es avec succ\u00e8s</div><div style="margin-top:10px"><button class="btn" style="background:var(--success)" onclick="downloadGeoFile('${fileKey.replace(/'/g,"\\'")}')">T\u00e9l\u00e9charger le fichier Excel</button></div></div>`;
+const fk=fileKey.replace(/'/g,"\\'");
+const uniqHtml=st.uniqueness!=null?`<div style="margin-top:8px;font-size:12px;color:${st.uniqueness>=60?'var(--success)':'var(--danger)'};font-weight:600">Unicité du contenu : ${st.uniqueness}%${st.uniqueness<60?' — risque de désindexation, augmentez les variantes':''}</div>`:'';
+const smBtn=st.has_sitemaps?`<button class="btn2" style="margin-left:8px" onclick="downloadSitemaps('${fk}')">Sitemaps XML (zip)</button>`:'';
+statusEl.innerHTML=`<div class="card result-box" style="margin-top:12px"><div class="result-msg">${total} pages générées avec succès</div>${uniqHtml}<div style="margin-top:10px"><button class="btn" style="background:var(--success)" onclick="downloadGeoFile('${fk}')">Télécharger le fichier Excel</button>${smBtn}</div><div style="margin-top:8px;font-size:11px;color:var(--muted)">Après import WP All Import : uploade les sitemaps à la racine du site puis colle urls.txt dans l'onglet Indexation.</div></div>`;
 }
 }catch(e){clearInterval(poll);progressLabel.textContent='Erreur';statusEl.innerHTML=`<div class="card" style="color:var(--danger);margin-top:8px">${e.message}</div>`;}
 },2000);
@@ -1956,9 +2012,86 @@ document.getElementById('geoloc-result').innerHTML=`<div class="card result-box"
 }catch(e){document.getElementById('geoloc-result').innerHTML=`<div class="card" style="color:var(--danger)">${e.message}</div>`;}
 }
 
+// ─── INDEXATION (IndexNow + suivi GSC) ──────────────────────────────────────
+let _idxSites=[];
+async function loadIndexation(){
+try{_idxSites=await apiFetch('/sites/');}catch(e){_idxSites=[];}
+const opts=_idxSites.map(si=>`<option value="${si.id}">${esc(si.name)} — ${esc(si.domain)}</option>`).join('');
+document.getElementById('tab-4').innerHTML=`
+<div class="section-title mb-12">Indexation</div>
+<div class="card mb-16">
+<div class="accent-title">1. Site &amp; clé IndexNow</div>
+<div class="grid2 mb-16">
+<div><label>Site</label><select id="idx-site">${opts||'<option value="">Aucun site — crée-le dans Overview</option>'}</select></div>
+<div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap">
+<button class="btn2" onclick="idxShowKey()">Voir la clé</button>
+<button class="btn2" onclick="idxUploadKey()">Uploader la clé (FTP)</button>
+</div>
+</div>
+<div id="idx-key-info" style="font-size:12px;color:var(--muted);font-family:var(--mono);word-break:break-all"></div>
+</div>
+<div class="card mb-16">
+<div class="accent-title">2. URLs à indexer</div>
+<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Colle les URLs (une par ligne) — le fichier urls.txt du zip de sitemaps les contient toutes.</div>
+<textarea id="idx-urls" rows="8" placeholder="https://monsite.fr/epaviste-lyon/&#10;https://monsite.fr/epaviste-villeurbanne/&#10;..."></textarea>
+<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+<button class="btn" onclick="idxSubmit()">Soumettre à IndexNow (Bing/Yandex)</button>
+<button class="btn2" onclick="idxCheck()">Vérifier l'indexation Google (max 50)</button>
+</div>
+<div id="idx-msg" style="margin-top:10px;font-size:12px;min-height:16px"></div>
+</div>
+<div class="card">
+<div class="accent-title">3. Statut d'indexation</div>
+<div id="idx-results" style="color:var(--muted);font-size:13px">Lance une vérification pour voir le statut Google de tes URLs (quota ~2000/jour).</div>
+</div>`;
+}
+function idxSiteId(){const v=document.getElementById('idx-site').value;return v?Number(v):null;}
+function idxUrls(){return document.getElementById('idx-urls').value.split('\n').map(u=>u.trim()).filter(u=>u.startsWith('http'));}
+function idxMsg(txt,ok){const el=document.getElementById('idx-msg');el.style.color=ok?'var(--success)':'var(--danger)';el.textContent=txt;}
+async function idxShowKey(){
+const id=idxSiteId();if(!id){idxMsg('Sélectionne un site',false);return;}
+try{const d=await apiFetch('/indexation/key/'+id);
+document.getElementById('idx-key-info').innerHTML=`Clé : <b>${d.key}</b><br>Fichier attendu : <a href="${d.key_file_url}" target="_blank" style="color:var(--accent)">${d.key_file_url}</a><br><span style="font-family:inherit">${esc(d.instructions)}</span>${d.ftp_configured?'':'<br><span style="color:var(--warn)">FTP non configuré sur ce site — dépose le fichier manuellement.</span>'}`;
+}catch(e){idxMsg(e.message,false);}
+}
+async function idxUploadKey(){
+const id=idxSiteId();if(!id){idxMsg('Sélectionne un site',false);return;}
+idxMsg('Upload en cours...',true);
+try{const d=await apiFetch('/indexation/key-upload/'+id,{method:'POST'});idxMsg('✓ '+d.message+' — '+d.key_file_url,true);}
+catch(e){idxMsg(e.message,false);}
+}
+async function idxSubmit(){
+const id=idxSiteId();const urls=idxUrls();
+if(!id){idxMsg('Sélectionne un site',false);return;}
+if(!urls.length){idxMsg('Aucune URL valide (une par ligne, commençant par http)',false);return;}
+idxMsg(`Soumission de ${urls.length} URLs...`,true);
+try{const d=await apiFetch('/indexation/submit',{method:'POST',body:JSON.stringify({site_id:id,urls})});idxMsg('✓ '+d.message,true);}
+catch(e){idxMsg(e.message,false);}
+}
+async function idxCheck(){
+const id=idxSiteId();const urls=idxUrls().slice(0,50);
+if(!id){idxMsg('Sélectionne un site',false);return;}
+if(!urls.length){idxMsg('Aucune URL valide',false);return;}
+idxMsg(`Vérification de ${urls.length} URLs via GSC (peut prendre ~${Math.ceil(urls.length*1.5)}s)...`,true);
+const resEl=document.getElementById('idx-results');
+try{
+const d=await apiFetch('/indexation/check',{method:'POST',body:JSON.stringify({site_id:id,urls})});
+idxMsg(`✓ ${d.indexed}/${d.total} indexées`,d.indexed===d.total);
+let rh=`<div style="display:flex;gap:16px;margin-bottom:12px;font-size:13px;font-weight:700">
+<span style="color:var(--success)">${d.indexed} indexées</span>
+<span style="color:${d.not_indexed?'var(--danger)':'var(--muted)'}">${d.not_indexed} non indexées</span></div>`;
+d.results.forEach(r=>{
+rh+=`<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px">
+<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.url)}</span>
+<span style="flex-shrink:0;font-weight:600;color:${r.indexed?'var(--success)':'var(--danger)'}">${r.indexed?'✓ Indexée':esc(r.coverage_state||r.verdict)}</span></div>`;
+});
+resEl.innerHTML=rh;
+}catch(e){idxMsg(e.message,false);}
+}
+
 // SETTINGS
 function loadSettings(){
-document.getElementById('tab-4').innerHTML=`
+document.getElementById('tab-5').innerHTML=`
 <div class="section-title mb-12">Paramètres</div>
 <div class="card"><div class="accent-title">Configuration API</div><div style="font-size:12px;color:var(--muted);line-height:1.8">Les clés API (Claude, DataForSEO, Google OAuth) se configurent dans les variables d'environnement de Coolify.</div></div>
 <div class="card"><div class="accent-title">Compte admin</div><div style="font-size:12px;color:var(--muted)">ADMIN_EMAIL et ADMIN_PASSWORD dans Coolify.</div></div>`;

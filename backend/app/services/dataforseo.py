@@ -52,6 +52,35 @@ class DataForSEOClient:
             resp.raise_for_status()
             return resp.json()
 
+    def get_people_also_ask(self, keyword: str, location: str = "France", language: str = "fr") -> list[str]:
+        """Questions « People Also Ask » réelles de la SERP Google pour un mot-clé.
+
+        Utilisées pour générer des FAQ qui reprennent mot pour mot les questions
+        posées sur Google (ciblage featured snippet / position 0).
+        """
+        with self._client() as client:
+            resp = client.post(f"{self.BASE_URL}/serp/google/organic/live/advanced", json=[{
+                "keyword": keyword,
+                "location_name": location,
+                "language_code": language,
+                "depth": 10,
+                "people_also_ask_click_depth": 1,
+            }])
+            resp.raise_for_status()
+            data = resp.json()
+
+        questions: list[str] = []
+        for task in data.get("tasks") or []:
+            for result in task.get("result") or []:
+                for item in result.get("items") or []:
+                    if item.get("type") != "people_also_ask":
+                        continue
+                    for paa in item.get("items") or []:
+                        q = (paa.get("title") or "").strip()
+                        if q and q not in questions:
+                            questions.append(q)
+        return questions
+
     def get_ranked_keywords(self, domain: str, location: str = "France"):
         """Mots-clés sur lesquels un domaine est positionné"""
         with self._client() as client:
