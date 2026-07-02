@@ -1120,6 +1120,7 @@ h+=`<div style="text-align:center;margin-top:20px">
 <button class="btn" id="geo-pdf-btn" onclick="downloadGEOReport()" style="padding:10px 28px;font-size:13px">
 Telecharger le rapport PDF
 </button>
+<div id="geo-pdf-status" style="font-size:12px;color:var(--muted);margin-top:8px;min-height:16px"></div>
 </div>`;
 
 window._geoData=d;
@@ -1127,7 +1128,12 @@ document.getElementById('geo-result').innerHTML=h;
 }
 
 function downloadGEOReport(){
-const d=window._geoData;if(!d){alert('Lancez une analyse d\'abord');return;}
+const stEl=document.getElementById('geo-pdf-status');
+const setPdf=(txt,col)=>{if(stEl){stEl.style.color=col||'var(--muted)';stEl.textContent=txt;}};
+const d=window._geoData;
+if(!d){setPdf('Lancez une analyse d\'abord',"var(--danger)");return;}
+setPdf('Préparation du rapport...');
+try{
 
 const domain=d.domain||'';
 const sum=d.summary||{};
@@ -1320,7 +1326,7 @@ Rapport genere par <b style="color:#7180ff">MatoubeAPP</b> — SEO Automation �
 
 // Open in new window and print to PDF
 const w=window.open('','_blank');
-if(!w){alert('Autorisez les popups pour telecharger le PDF');return;}
+if(!w){setPdf('Autorisez les popups pour télécharger le PDF',"var(--danger)");return;}
 w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
 <title>Rapport GEO — ${domain}</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -1341,6 +1347,8 @@ td{padding:5px 4px;border-bottom:1px solid #f0f0f0;font-size:11px}
 </div>
 </body></html>`);
 w.document.close();
+setPdf('✓ Rapport ouvert dans un nouvel onglet — utilisez « Imprimer / Enregistrer en PDF »',"var(--success)");
+}catch(e){setPdf('Erreur lors de la génération du PDF : '+e.message,"var(--danger)");}
 }
 
 // GENERATOR
@@ -1802,11 +1810,12 @@ h+=`<div ${stepStyle}>
 <span class="geo-chevron" ${chevron}>\u25BC</span>
 </div>
 <div id="geo-step4-body" ${stepBody}>
-<div class="flex-gap-10" style="margin-bottom:14px">
+<div class="flex-gap-10" style="margin-bottom:8px">
 <button class="btn" onclick="previewGeoloc()">Pr\u00e9visualiser</button>
 <button class="btn" style="background:var(--success)" onclick="generateFile()">G\u00e9n\u00e9rer fichier Excel</button>
 <span id="geo-gen-btn"></span>
 </div>
+<div id="geo-cost-estimate" style="font-size:11.5px;color:var(--text);margin-bottom:14px;line-height:1.5"></div>
 <div id="geo-progress-wrap" class="hidden" style="margin-bottom:12px">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
 <span style="font-size:12px;font-weight:600;color:var(--text)" id="geo-progress-label">G\u00e9n\u00e9ration en cours...</span>
@@ -1833,6 +1842,9 @@ h+=`<div ${stepStyle}>
 document.getElementById('tab-3').innerHTML=h;
 const napChk=document.getElementById('geo-realreviews');
 if(napChk)napChk.addEventListener('change',()=>{document.getElementById('geo-nap-wrap').classList.toggle('hidden',!napChk.checked);});
+// Recalcule le coût estimé quand une option influant sur le nombre d'appels IA change
+['geo-ai-content','geo-variantes','geo-paa','geo-serp','geo-quality','geo-concurrence'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('change',geoEstimateCost);});
+geoEstimateCost();
 }
 
 function geoToggleStep(id,headerEl){
@@ -1966,6 +1978,30 @@ if(step5&&step5.classList.contains('hidden')){step5.classList.remove('hidden');s
 
 const GEO_STEP_LABELS={init:'Initialisation',analyze:'Analyse du texte source (Claude)',anchors:'G\u00e9n\u00e9ration des ancres de maillage',paa:'Questions Google (People Also Ask)',serp:'Analyse SERP (information gain)',quality:'Agent juge qualité',blocks:'Optimisation des blocs SEO',competitors:'Analyse concurrentielle',variants:'G\u00e9n\u00e9ration des variantes',assemble:'Assemblage des pages',saving:'Sauvegarde du fichier',done:'Termin\u00e9'};
 
+// Rendu de la checklist des étapes (✓ / ✗ / ⏳ + message par étape)
+function geoRenderSteps(steps){
+if(!steps||!steps.length)return '';
+const ic={ok:'✓',error:'✗',running:'⏳',skipped:'–',pending:'○'};
+const cl={ok:'var(--success)',error:'var(--danger)',running:'var(--accent)',skipped:'var(--muted)',pending:'var(--muted)'};
+return '<div class="card" style="margin-top:10px;padding:12px 16px">'+steps.map(x=>`<div style="display:flex;gap:8px;align-items:baseline;padding:3px 0;font-size:12px"><span style="color:${cl[x.status]||'var(--muted)'};font-weight:700;width:14px;flex-shrink:0">${ic[x.status]||'○'}</span><span style="color:${x.status==='error'?'var(--danger)':'var(--text)'};font-weight:${x.status==='running'?'700':'500'}">${esc(x.label)}</span>${x.message?`<span style="color:var(--muted);font-size:11px">— ${esc(x.message)}</span>`:''}</div>`).join('')+'</div>';
+}
+// Estimation du coût FIXE (indépendant du nombre de villes)
+async function geoEstimateCost(){
+const useAI=document.getElementById('geo-ai-content').checked;
+const el=document.getElementById('geo-cost-estimate');
+if(!el)return;
+if(!useAI){el.innerHTML='<span style="color:var(--success)">Coût : gratuit</span> (structure sans IA — contenu à rédiger)';return;}
+const useConc=document.getElementById('geo-concurrence').checked;
+try{
+const d=await apiFetch('/geoloc/estimate-cost',{method:'POST',body:JSON.stringify({
+nb_variants:Number(document.getElementById('geo-variantes').value)||1,
+use_paa:document.getElementById('geo-paa').checked,
+serp_gain:document.getElementById('geo-serp').checked,
+quality_check:document.getElementById('geo-quality').checked,
+competitor_urls:useConc?['x']:[]})});
+el.innerHTML=`Coût estimé : <b>≈ ${d.estimated_eur.toFixed(2)} €</b> (${d.claude_calls} appels IA) — <span style="color:var(--muted)">${esc(d.note)}</span>`;
+}catch(e){el.textContent='';}
+}
 async function generateFile(){
 const domain=document.getElementById('geoloc-domain').value.trim();
 const kw=document.getElementById('geo-kw').value.trim();
@@ -2005,16 +2041,21 @@ progressCount.textContent=`0/${total}`;
 const poll=setInterval(async()=>{
 try{
 const st=await apiFetch('/geoloc/file-status/'+encodeURIComponent(fileKey));
+const stepsHtml=geoRenderSteps(st.steps);
 if(st.status==='error'){
 clearInterval(poll);
 progressLabel.textContent='Erreur';
-statusEl.innerHTML=`<div class="card" style="color:var(--danger);margin-top:8px"><b>\u00c9chec \u00e0 l'\u00e9tape \u00ab ${GEO_STEP_LABELS[st.step]||st.step||'?'} \u00bb</b><br>${st.error||'Erreur inconnue'}</div>`;
+const failed=(st.steps||[]).find(x=>x.status==='error');
+const where=failed?failed.label:(GEO_STEP_LABELS[st.step]||st.step||'?');
+const why=failed&&failed.message?failed.message:(st.error||'Erreur inconnue');
+statusEl.innerHTML=stepsHtml+`<div class="card" style="color:var(--danger);margin-top:8px"><b>\u00c9chec \u00e0 l'\u00e9tape \u00ab ${esc(where)} \u00bb</b><br>${esc(why)}</div>`;
 return;
 }
 const pct=st.total>0?Math.round((st.done/st.total)*100):0;
 progressBar.style.width=pct+'%';
 progressCount.textContent=`${st.done}/${st.total}`;
 progressLabel.textContent=st.step&&st.step!=='done'?(GEO_STEP_LABELS[st.step]||st.step):`G\u00e9n\u00e9ration : ${pct}%`;
+if(st.status!=='done')statusEl.innerHTML=stepsHtml;
 if(st.status==='done'){
 clearInterval(poll);
 progressBar.style.width='100%';
@@ -2025,7 +2066,8 @@ const uniqHtml=st.uniqueness!=null?`<div style="margin-top:8px;font-size:12px;co
 const q=st.quality;
 const qualHtml=q?`<div style="margin-top:8px;font-size:12px;color:${q.avg_score>=70?'var(--success)':q.avg_score>=50?'var(--warn)':'var(--danger)'};font-weight:600">Score qualité (juge IA) : ${q.avg_score}/100${q.weak_variants?` — ${q.weak_variants}/${q.total_variants} variante(s) faible(s)`:''}</div>${q.issues&&q.issues.length?`<div style="margin-top:4px;font-size:11px;color:var(--muted)">À améliorer : ${q.issues.map(esc).join(' · ')}</div>`:''}`:'';
 const smBtn=st.has_sitemaps?`<button class="btn2" style="margin-left:8px" onclick="downloadSitemaps('${fk}')">Sitemaps XML (zip)</button>`:'';
-statusEl.innerHTML=`<div class="card result-box" style="margin-top:12px"><div class="result-msg">${total} pages générées avec succès</div>${uniqHtml}${qualHtml}<div style="margin-top:10px"><button class="btn" style="background:var(--success)" onclick="downloadGeoFile('${fk}')">Télécharger le fichier Excel</button>${smBtn}</div><div style="margin-top:8px;font-size:11px;color:var(--muted)">Après import WP All Import : uploade les sitemaps à la racine du site puis colle urls.txt dans l'onglet Indexation.</div></div>`;
+const costHtml=st.cost_eur!=null?`<div style="margin-top:8px;font-size:12px;color:var(--muted)">Coût réel : <b style="color:var(--text)">${Number(st.cost_eur).toFixed(2)} €</b>${st.api_calls?` (${st.api_calls} appels IA, pour ${total} pages)`:''}</div>`:'';
+statusEl.innerHTML=stepsHtml+`<div class="card result-box" style="margin-top:12px"><div class="result-msg">${total} pages générées avec succès</div>${uniqHtml}${qualHtml}${costHtml}<div style="margin-top:10px"><button class="btn" style="background:var(--success)" onclick="downloadGeoFile('${fk}')">Télécharger le fichier Excel</button>${smBtn}</div><div style="margin-top:8px;font-size:11px;color:var(--muted)">Après import WP All Import : uploade les sitemaps à la racine du site puis colle urls.txt dans l'onglet Indexation.</div></div>`;
 }
 }catch(e){clearInterval(poll);progressLabel.textContent='Erreur';statusEl.innerHTML=`<div class="card" style="color:var(--danger);margin-top:8px">${e.message}</div>`;}
 },2000);
@@ -2078,8 +2120,10 @@ function idxUrls(){return document.getElementById('idx-urls').value.split('\n').
 function idxMsg(txt,ok){const el=document.getElementById('idx-msg');el.style.color=ok?'var(--success)':'var(--danger)';el.textContent=txt;}
 async function idxShowKey(){
 const id=idxSiteId();if(!id){idxMsg('Sélectionne un site',false);return;}
+idxMsg('Chargement de la clé...',true);
 try{const d=await apiFetch('/indexation/key/'+id);
 document.getElementById('idx-key-info').innerHTML=`Clé : <b>${d.key}</b><br>Fichier attendu : <a href="${d.key_file_url}" target="_blank" style="color:var(--accent)">${d.key_file_url}</a><br><span style="font-family:inherit">${esc(d.instructions)}</span>${d.ftp_configured?'':'<br><span style="color:var(--warn)">FTP non configuré sur ce site — dépose le fichier manuellement.</span>'}`;
+idxMsg('✓ Clé affichée',true);
 }catch(e){idxMsg(e.message,false);}
 }
 async function idxUploadKey(){

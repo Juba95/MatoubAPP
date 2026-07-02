@@ -465,10 +465,27 @@ def generate_file(req: GeolocFileRequest, background_tasks: BackgroundTasks):
     if not villes:
         raise HTTPException(status_code=400, detail="Aucune ville ne correspond aux filtres")
     file_key = f"{req.site_domain}_{req.keyword_template}_{len(villes)}_{datetime.now().strftime('%H%M%S')}"
-    _generated_files[file_key] = {"status": "running", "total": len(villes), "done": 0}
+    _simple_steps = [
+        {"key": "content", "label": "Génération du contenu"
+         + (" IA (Claude)" if req.generate_content else " (structure)"),
+         "status": "pending", "message": ""},
+        {"key": "assemble", "label": "Assemblage Excel", "status": "pending", "message": ""},
+    ]
+    _generated_files[file_key] = {
+        "status": "running", "total": len(villes), "done": 0, "steps": _simple_steps,
+    }
 
     def run():
         import openpyxl
+
+        def _set(key, status, msg=""):
+            for s in _simple_steps:
+                if s["key"] == key:
+                    s["status"] = status
+                    if msg:
+                        s["message"] = msg
+
+        _set("content", "running")
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Import WP"
@@ -592,20 +609,36 @@ def generate_file(req: GeolocFileRequest, background_tasks: BackgroundTasks):
             ws.append(row)
             _generated_files[file_key]["done"] = i + 1
 
+        _set("content", "ok", f"{len(villes)} pages")
         # Sauvegarder en mémoire
+        _set("assemble", "running")
         buffer = io.BytesIO()
         wb.save(buffer)
         buffer.seek(0)
+        _set("assemble", "ok")
         _generated_files[file_key] = {
             "status": "done",
             "total": len(villes),
             "done": len(villes),
+            "steps": _simple_steps,
+            "cost_eur": 0.0,
             "data": buffer.getvalue(),
             "filename": f"import_{req.site_domain}_{len(villes)}_pages.xlsx",
             "sitemaps": build_sitemaps_zip(req.site_domain, url_entries) if req.generate_sitemaps else None,
         }
 
-    background_tasks.add_task(run)
+    def run_guarded():
+        try:
+            run()
+        except Exception as exc:
+            logger.error("generate-file error: %s", traceback.format_exc())
+            for s in _simple_steps:
+                if s["status"] == "running":
+                    s["status"] = "error"
+                    s["message"] = str(exc)
+            _generated_files[file_key].update({"status": "error", "steps": _simple_steps, "error": str(exc)})
+
+    background_tasks.add_task(run_guarded)
     return {"message": f"Génération en cours ({len(villes)} pages)", "file_key": file_key, "total": len(villes)}
 
 
@@ -624,6 +657,9 @@ def file_status(file_key: str):
         "uniqueness": data.get("uniqueness"),
         "quality": data.get("quality"),
         "has_sitemaps": bool(data.get("sitemaps")),
+        "steps": data.get("steps", []),
+        "cost_eur": data.get("cost_eur"),
+        "api_calls": data.get("api_calls"),
     }
 
 
@@ -778,6 +814,48 @@ def generate_variants(req: VariantsRequest):
         raise HTTPException(status_code=500, detail=f"Erreur génération variantes : {exc}")
 
 
+class CostEstimateRequest(BaseModel):
+    nb_variants: int = 3
+    use_paa: bool = False
+    serp_gain: bool = False
+    quality_check: bool = False
+    competitor_urls: list[str] = []
+
+
+@router.post("/estimate-cost")
+def estimate_cost(req: CostEstimateRequest):
+    """Estime le coût FIXE d'une génération avancée (indépendant du nombre de villes).
+
+    Le contenu = 1 base + N variantes générées par Claude, puis assemblées sur
+    toutes les villes en pur calcul (zéro appel par ville).
+    """
+    # Coûts indicatifs par appel (EUR), basés sur des tailles de prompt typiques.
+    SONNET_CALL = 0.05   # analyse / ancres / blocs / variante / synthèse SERP
+    HAIKU_CALL = 0.008   # juge qualité
+    DATAFORSEO_CALL = 0.002  # SERP / PAA
+
+    sonnet_calls = 3 + max(1, req.nb_variants)  # analyze + anchors + blocks + variantes
+    if req.serp_gain:
+        sonnet_calls += 1
+    if req.competitor_urls:
+        sonnet_calls += 1
+    haiku_calls = max(1, req.nb_variants) if req.quality_check else 0
+    dfs_calls = (1 if req.use_paa else 0) + (1 if req.serp_gain else 0)
+
+    total = sonnet_calls * SONNET_CALL + haiku_calls * HAIKU_CALL + dfs_calls * DATAFORSEO_CALL
+    return {
+        "estimated_eur": round(total, 2),
+        "claude_calls": sonnet_calls + haiku_calls,
+        "note": "Coût fixe : identique pour 100 ou 10 000 villes (contenu = base + variantes, "
+                "puis assemblage local sans appel IA).",
+        "breakdown": {
+            "redaction_variantes": round(sonnet_calls * SONNET_CALL, 2),
+            "juge_qualite": round(haiku_calls * HAIKU_CALL, 3),
+            "dataforseo": round(dfs_calls * DATAFORSEO_CALL, 3),
+        },
+    }
+
+
 @router.post("/build-file")
 def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
     """Full pipeline: analyze, generate blocks/anchors/variants, assemble all city pages, build Excel."""
@@ -795,11 +873,40 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
         "step": "init",
     }
 
+    # Construction de la liste des étapes selon les options activées
+    step_defs = [("analyze", "Analyse du texte source"), ("anchors", "Ancres de maillage")]
+    if req.use_paa:
+        step_defs.append(("paa", "Questions Google (PAA)"))
+    if req.serp_gain:
+        step_defs.append(("serp", "Analyse SERP (information gain)"))
+    step_defs.append(("blocks", "Rédaction des blocs SEO"))
+    step_defs.append(("avis", "Génération des avis clients"))
+    if req.competitor_urls:
+        step_defs.append(("competitors", "Analyse concurrentielle"))
+    step_defs.append(("variants", "Génération des variantes"))
+    if req.quality_check:
+        step_defs.append(("quality", "Contrôle qualité (juge IA)"))
+    step_defs += [("assemble", "Assemblage des pages"), ("saving", "Sauvegarde du fichier")]
+    _generated_files[file_key]["steps"] = [
+        {"key": k, "label": lbl, "status": "pending", "message": ""} for k, lbl in step_defs
+    ]
+
     def run_pipeline():
         import openpyxl
 
         engine = GeolocEngine()
         state = _generated_files[file_key]
+        steps = state["steps"]
+
+        def set_step(key, status, message=""):
+            for s in steps:
+                if s["key"] == key:
+                    s["status"] = status
+                    if message:
+                        s["message"] = message
+                    break
+            state["step"] = key
+            state["cost_eur"] = engine.cost_eur
 
         try:
             # Texte source : si vide, on synthétise un brief pour la génération 100% IA
@@ -815,34 +922,40 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                 )
 
             # --- Step 1: Analyze source text ---
-            state["step"] = "analyze"
+            set_step("analyze", "running")
             ctx = engine.analyze_source(source_text, brief)
+            set_step("analyze", "ok")
 
             # --- Step 2: Generate anchors ---
-            state["step"] = "anchors"
+            set_step("anchors", "running")
             anchors = engine.generate_anchors(ctx)
+            set_step("anchors", "ok", f"{len(anchors)} ancres")
 
             # --- Step 2b: People Also Ask réels (optionnel, DataForSEO) ---
             paa_questions: list[str] = []
             if req.use_paa:
-                state["step"] = "paa"
+                set_step("paa", "running")
                 try:
                     from app.config import get_settings as _gs
-                    if _gs().dataforseo_login:
+                    if not _gs().dataforseo_login:
+                        set_step("paa", "skipped", "DataForSEO non configuré — FAQ par Claude")
+                    else:
                         from app.services.dataforseo import DataForSEOClient
                         paa_questions = DataForSEOClient().get_people_also_ask(
                             ctx.get("keyword") or req.keyword_template
                         )
-                        logger.info("PAA récupérées : %d questions", len(paa_questions))
+                        set_step("paa", "ok", f"{len(paa_questions)} questions réelles")
                 except Exception as exc:
-                    logger.warning("PAA indisponibles (%s) — FAQ générée par Claude", exc)
+                    set_step("paa", "skipped", f"Indisponible ({exc}) — FAQ par Claude")
 
             # --- Step 2c: SERP information gain (optionnel, DataForSEO + Claude) ---
             if req.serp_gain:
-                state["step"] = "serp"
+                set_step("serp", "running")
                 try:
                     from app.config import get_settings as _gs
-                    if _gs().dataforseo_login:
+                    if not _gs().dataforseo_login:
+                        set_step("serp", "skipped", "DataForSEO non configuré")
+                    else:
                         from app.services.dataforseo import DataForSEOClient
                         serp = DataForSEOClient().get_serp_top_results(
                             ctx.get("keyword") or req.keyword_template
@@ -852,7 +965,6 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                         )
                         if gain.get("themes_a_couvrir") or gain.get("angle_differenciant"):
                             ctx["serp_gain"] = gain
-                            # Injecte thèmes + angle dans le contexte métier lu par optimize_blocks
                             extra = []
                             if gain.get("angle_differenciant"):
                                 extra.append(f"Angle différenciant à exploiter : {gain['angle_differenciant']}")
@@ -863,35 +975,51 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                                 extra.append("Entités/termes sémantiques à intégrer : "
                                              + ", ".join(gain["entites_importantes"][:10]))
                             ctx["contexte_metier"] = (ctx.get("contexte_metier", "") + " " + " ".join(extra)).strip()
-                            logger.info("SERP gain : %d thèmes", len(gain.get("themes_a_couvrir", [])))
+                            set_step("serp", "ok", f"{len(gain.get('themes_a_couvrir', []))} thèmes")
+                        else:
+                            set_step("serp", "skipped", "Aucun thème exploitable")
                 except Exception as exc:
-                    logger.warning("SERP gain indisponible (%s)", exc)
+                    set_step("serp", "skipped", f"Indisponible ({exc})")
 
             # --- Step 3: Optimize blocks ---
-            state["step"] = "blocks"
+            set_step("blocks", "running")
             blocs = engine.optimize_blocks(source_text, ctx, anchors, paa_questions=paa_questions)
+            nb_h2 = sum(1 for k in blocs if k.startswith("BLOC_H2"))
+            set_step("blocks", "ok", f"{nb_h2} sections H2 + FAQ")
+
             # Les avis clients sont extraits : ils ne passent pas par les variantes
             # (rotation par ville pour l'unicité, cf. assemble_page)
             avis = blocs.pop("BLOC_AVIS", [])
             if not isinstance(avis, list):
                 avis = []
+            if avis:
+                set_step("avis", "ok", f"{len(avis)} avis générés")
+            else:
+                set_step("avis", "skipped", "Aucun avis (le bloc n'a pas été produit)")
 
             # --- Step 4: Analyze competitors (if URLs provided) ---
             competitor_data = None
             if req.competitor_urls:
-                state["step"] = "competitors"
-                competitor_data = engine.analyze_competitors(req.competitor_urls, ctx)
-                # Enrich context with competitor insights
-                ctx["competitor_insights"] = competitor_data
+                set_step("competitors", "running")
+                try:
+                    competitor_data = engine.analyze_competitors(req.competitor_urls, ctx)
+                    ctx["competitor_insights"] = competitor_data
+                    nb_themes = len(competitor_data.get("themes_manquants", []))
+                    set_step("competitors", "ok", f"{nb_themes} thèmes manquants repérés")
+                except Exception as exc:
+                    set_step("competitors", "skipped", f"Échec de l'analyse ({exc})")
 
             # --- Step 5: Generate variants ---
-            state["step"] = "variants"
+            set_step("variants", "running")
             variants = engine.generate_variants(blocs, ctx, req.nb_variants)
             if not variants:
                 variants = [blocs]
+                set_step("variants", "error", "Aucune variante générée — base réutilisée")
+            else:
+                set_step("variants", "ok", f"{len(variants)} variantes")
 
             # --- Step 6+7: Assemble pages & build Excel ---
-            state["step"] = "assemble"
+            set_step("assemble", "running")
             wb = openpyxl.Workbook()
             ws = wb.active
             ws.title = "Import WP"
@@ -949,34 +1077,40 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
             # (coût = nb_variants appels Haiku, pas un par page).
             quality_report = None
             if req.quality_check and villes:
-                state["step"] = "quality"
-                sample = villes[0]
-                sample_engine = villes_engine[0]
-                scores, all_issues, weak = [], [], 0
-                for vi, variant in enumerate(variants):
-                    sample_content = engine.assemble_page(
-                        blocs=variant, ville=sample_engine, ctx=ctx,
-                        maillage="", variant_idx=vi, use_divi=False,
-                        images=[], colors=req.colors,
-                        h1=replace_ville(h1_tpl, sample["name"]),
-                        avis=[], layout_seed=layout_seed,
-                    )
-                    verdict = engine.judge_quality(sample_content, ctx)
-                    if verdict.get("score") is not None:
-                        scores.append(verdict["score"])
-                    if not verdict.get("keep", True):
-                        weak += 1
-                    all_issues.extend(verdict.get("issues", [])[:3])
-                if scores:
-                    quality_report = {
-                        "avg_score": round(sum(scores) / len(scores)),
-                        "min_score": min(scores),
-                        "weak_variants": weak,
-                        "total_variants": len(variants),
-                        "issues": list(dict.fromkeys(all_issues))[:8],
-                    }
-                    logger.info("Juge qualité : score moyen %s/100, %d variantes faibles",
-                                quality_report["avg_score"], weak)
+                set_step("quality", "running")
+                try:
+                    sample = villes[0]
+                    sample_engine = villes_engine[0]
+                    scores, all_issues, weak = [], [], 0
+                    for vi, variant in enumerate(variants):
+                        sample_content = engine.assemble_page(
+                            blocs=variant, ville=sample_engine, ctx=ctx,
+                            maillage="", variant_idx=vi, use_divi=False,
+                            images=[], colors=req.colors,
+                            h1=replace_ville(h1_tpl, sample["name"]),
+                            avis=[], layout_seed=layout_seed,
+                        )
+                        verdict = engine.judge_quality(sample_content, ctx)
+                        if verdict.get("score") is not None:
+                            scores.append(verdict["score"])
+                        if not verdict.get("keep", True):
+                            weak += 1
+                        all_issues.extend(verdict.get("issues", [])[:3])
+                    if scores:
+                        quality_report = {
+                            "avg_score": round(sum(scores) / len(scores)),
+                            "min_score": min(scores),
+                            "weak_variants": weak,
+                            "total_variants": len(variants),
+                            "issues": list(dict.fromkeys(all_issues))[:8],
+                        }
+                        set_step("quality", "ok",
+                                 f"score {quality_report['avg_score']}/100"
+                                 + (f", {weak} variante(s) faible(s)" if weak else ""))
+                    else:
+                        set_step("quality", "skipped", "Juge indisponible")
+                except Exception as exc:
+                    set_step("quality", "skipped", f"Contrôle impossible ({exc})")
 
             for i, v in enumerate(villes):
                 # Rotate variants
@@ -1108,35 +1242,49 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                 ws.append(row)
                 state["done"] = i + 1
 
+            set_step("assemble", "ok", f"{len(villes)} pages")
+
             # --- Step 8: Save to cache ---
-            state["step"] = "saving"
+            set_step("saving", "running")
             buffer = io.BytesIO()
             wb.save(buffer)
             buffer.seek(0)
+            sitemaps_zip = build_sitemaps_zip(req.site_domain, url_entries) if req.generate_sitemaps else None
+            set_step("saving", "ok", f"{len(villes)} pages — coût {engine.cost_eur:.2f} €")
 
             _generated_files[file_key] = {
                 "status": "done",
                 "total": len(villes),
                 "done": len(villes),
                 "step": "done",
+                "steps": steps,
+                "cost_eur": engine.cost_eur,
+                "api_calls": engine.calls,
                 "data": buffer.getvalue(),
                 "filename": f"adv_import_{req.site_domain}_{len(villes)}_pages.xlsx",
                 "ctx": ctx,
                 "nb_variants": len(variants),
                 "uniqueness": uniq.score(),
                 "quality": quality_report,
-                "sitemaps": build_sitemaps_zip(req.site_domain, url_entries) if req.generate_sitemaps else None,
+                "sitemaps": sitemaps_zip,
             }
 
         except Exception as exc:
             logger.error("build-file pipeline error: %s", traceback.format_exc())
-            _generated_files[file_key] = {
+            # Marque l'étape en cours comme échouée avec la raison
+            for s in steps:
+                if s["status"] == "running":
+                    s["status"] = "error"
+                    s["message"] = str(exc)
+            _generated_files[file_key].update({
                 "status": "error",
                 "total": state.get("total", 0),
                 "done": state.get("done", 0),
                 "step": state.get("step", "unknown"),
+                "steps": steps,
+                "cost_eur": engine.cost_eur,
                 "error": str(exc),
-            }
+            })
 
     background_tasks.add_task(run_pipeline)
     return {

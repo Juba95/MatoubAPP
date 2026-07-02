@@ -251,10 +251,40 @@ class GeolocEngine:
     # Modele economique pour l'agent juge qualite (appele en volume).
     JUDGE_MODEL = "claude-haiku-4-5"
 
+    # Prix indicatif $ / million de tokens (input, output) par modele.
+    PRICING = {
+        "claude-sonnet-4-6": (3.0, 15.0),
+        "claude-haiku-4-5": (1.0, 5.0),
+    }
+    USD_TO_EUR = 0.92
+
+    # Valeurs par defaut au niveau classe : garantissent que toute instance a
+    # ces attributs meme si __init__ est contourne (tests, sous-classes).
+    cost_usd = 0.0
+    calls = 0
+
     def __init__(self, model: Optional[str] = None):
         settings = get_settings()
         self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
         self.model = model or self.DEFAULT_MODEL
+        # Suivi du cout reel cumule sur toute la generation
+        self.cost_usd = 0.0
+        self.calls = 0
+
+    @property
+    def cost_eur(self) -> float:
+        return round(getattr(self, "cost_usd", 0.0) * self.USD_TO_EUR, 4)
+
+    def _track_usage(self, usage, used_model: str):
+        """Accumule le cout d'un appel a partir de l'usage retourne."""
+        if usage is None:
+            return
+        price_in, price_out = self.PRICING.get(used_model, (3.0, 15.0))
+        self.cost_usd = getattr(self, "cost_usd", 0.0) + (
+            (getattr(usage, "input_tokens", 0) / 1_000_000) * price_in
+            + (getattr(usage, "output_tokens", 0) / 1_000_000) * price_out
+        )
+        self.calls = getattr(self, "calls", 0) + 1
 
     # ------------------------------------------------------------------
     # Appels Claude
@@ -269,14 +299,16 @@ class GeolocEngine:
         model: Optional[str] = None,
     ) -> str:
         """Envoie un prompt a Claude et retourne la reponse texte."""
+        used_model = model or self.model
         try:
             response = self.client.messages.create(
-                model=model or self.model,
+                model=used_model,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 system=system,
                 messages=[{"role": "user", "content": user_prompt}],
             )
+            self._track_usage(getattr(response, "usage", None), used_model)
             return response.content[0].text
         except anthropic.APIError as exc:
             logger.error("Erreur API Claude : %s", exc)
