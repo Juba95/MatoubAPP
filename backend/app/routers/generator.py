@@ -53,6 +53,9 @@ class FullInstallRequest(BaseModel):
     site_prompt: str = ""
     # Langue principale du site généré (thème, contenu, WPLANG, hreflang)
     main_language: str = "fr"
+    # Langues additionnelles : un jeu de pages par langue (/en/, /ru/, /zh-tw/…)
+    # + switcher + hreflang croisés
+    languages: list[str] = []
     # Couleur principale (ex #1e6fd9) → palette dérivée automatiquement
     primary_color: str = ""
     competitor_urls: list[str] = []
@@ -230,6 +233,7 @@ def full_install(
         "image_count": req.image_count,
         "image_provider": "openai",
         "main_language": req.main_language,
+        "languages": req.languages,
         "palette": (
             __import__("app.services.colors", fromlist=["build_palette"]).build_palette(req.primary_color)
             if req.primary_color else None

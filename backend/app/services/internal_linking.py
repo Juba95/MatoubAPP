@@ -31,6 +31,8 @@ def _slug(url: str) -> str:
 
 def _service_base(page: dict) -> str:
     """Base « service » d'une page géoloc = slug sans la ville détectée."""
+    if not page.get("url"):
+        return ""
     slug = _slug(page["url"])
     city = _norm(page.get("city", "")).replace(" ", "-")
     if city and city in slug:
@@ -316,7 +318,8 @@ def _build_suggestions(pages, by_url, inlinks, out_links, pagerank, click_depth,
     """Suggestions de liens SCORÉES par impact estimé."""
     linked_pairs = {(u, v) for u in out_links for v in out_links[u]}
     max_words = max((p.get("word_count", 0) for p in pages), default=1) or 1
-    home = start
+    # Résout l'accueil vers l'URL réellement crawlée (avec ou sans / final)
+    home = next((u for u in by_url if u.rstrip("/") == start), start)
     donor_budget: dict[str, int] = defaultdict(int)   # cap de liens ajoutés par donneur
 
     def already(a, b):

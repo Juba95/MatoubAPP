@@ -1145,6 +1145,39 @@ def _theme_lang_instruction(language: str) -> str:
     )
 
 
+def _multilang_instruction(main_language: str, languages: list | None) -> str:
+    """Site multilingue : un jeu de pages par langue + switcher + hreflang.
+
+    La langue principale reste à la racine (/), chaque langue additionnelle vit
+    sous son préfixe (/en/, /ru/, /zh-tw/…). Google indexe chaque version
+    indépendamment : chaque page doit exister réellement dans chaque langue."""
+    from app.services.i18n import coerce_langs, lang_name, hreflang as _hreflang
+    main, langs = coerce_langs(main_language, languages)
+    extras = [l for l in langs if l != main]
+    if not extras:
+        return ""
+    lines = "\n".join(
+        f"  - {lang_name(l, 'en')} ({lang_name(l, 'native')}) : URL prefix '/{l}/', "
+        f"hreflang '{_hreflang(l)}'"
+        for l in extras
+    )
+    return (
+        "\n\nMULTILINGUAL SITE (MANDATORY):\n"
+        f"Main language: {lang_name(main, 'en')} at the root (no prefix, "
+        f"hreflang '{_hreflang(main)}').\n"
+        f"Additional language versions:\n{lines}\n"
+        "For EVERY page in the 'pages' array, also produce one page per additional "
+        "language: same structure, slug prefixed with the language code "
+        "(e.g. 'en/about'), content written NATIVELY in that language (no literal "
+        "translation, adapt to the local market). Each page's content must start "
+        "with an HTML comment '<!-- lang:CODE -->' identifying its language. "
+        "Add a small language switcher in header.php linking the versions. "
+        "In header.php, output <link rel=\"alternate\" hreflang=\"...\"> tags for "
+        "every language version of the current page plus x-default pointing to "
+        "the main language."
+    )
+
+
 class ThemeGenerator:
     """
     Genere un theme WordPress (custom PHP ou Divi Builder) via Claude.
@@ -1162,6 +1195,7 @@ class ThemeGenerator:
         eat_context: str | None = None,
         language: str = "fr",
         palette: dict | None = None,
+        languages: list | None = None,
     ) -> dict:
         """Genere un theme PHP custom complet. Retourne le dict JSON."""
         logger.info("Generation du theme custom avec Claude")
@@ -1230,9 +1264,12 @@ RULES:
         if eat_context:
             full_prompt += eat_context
         full_prompt += _theme_lang_instruction(language)
+        full_prompt += _multilang_instruction(language, languages)
         full_prompt += _palette_instruction(palette)
 
-        raw = self._call(system, full_prompt, max_tokens=12000)
+        # Budget de sortie : +8k tokens par langue additionnelle (1 jeu de pages/langue)
+        n_extra = len([l for l in (languages or []) if l != language])
+        raw = self._call(system, full_prompt, max_tokens=min(32000, 12000 + 8000 * n_extra))
         data = json.loads(raw)
         logger.info(
             "Theme '%s' genere (%d fichiers, %d pages)",
@@ -1251,6 +1288,7 @@ RULES:
         eat_context: str | None = None,
         language: str = "fr",
         palette: dict | None = None,
+        languages: list | None = None,
     ) -> dict:
         """Genere des layouts Divi Builder. Retourne le dict JSON."""
         logger.info("Generation du layout Divi Builder avec Claude")
@@ -1329,9 +1367,12 @@ DIVI SHORTCODE RULES:
         if eat_context:
             full_prompt += eat_context
         full_prompt += _theme_lang_instruction(language)
+        full_prompt += _multilang_instruction(language, languages)
         full_prompt += _palette_instruction(palette)
 
-        raw = self._call(system, full_prompt, max_tokens=12000)
+        # Budget de sortie : +8k tokens par langue additionnelle (1 jeu de pages/langue)
+        n_extra = len([l for l in (languages or []) if l != language])
+        raw = self._call(system, full_prompt, max_tokens=min(32000, 12000 + 8000 * n_extra))
         data = json.loads(raw)
         logger.info(
             "Layouts Divi generes (%d pages)", len(data.get("pages", [])),
@@ -2790,6 +2831,7 @@ class WPGeneratorPipeline:
             generator = ThemeGenerator(claude_client)
             site_prompt = competitor_brief or config.get("site_prompt", "")
             site_lang = config.get("main_language", "fr")
+            site_langs = config.get("languages") or []
             site_palette = config.get("palette")
 
             if mode == "divi":
@@ -2801,6 +2843,7 @@ class WPGeneratorPipeline:
                     eat_context=eat_context,
                     language=site_lang,
                     palette=site_palette,
+                    languages=site_langs,
                 )
             else:
                 theme_data = generator.generate_custom(
@@ -2811,6 +2854,7 @@ class WPGeneratorPipeline:
                     eat_context=eat_context,
                     language=site_lang,
                     palette=site_palette,
+                    languages=site_langs,
                 )
 
             if logo_url and theme_data:

@@ -8,7 +8,12 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#f5f5f7;--card:#ffffff;--card2:#f0f0f5;--border:#e2e2ea;--accent:#6c5ce7;--accent2:#a29bfe;--text:#1a1a2e;--muted:#8888a0;--danger:#ff6b6b;--success:#51cf66;--warn:#fcc419;--orange:#ff922b;--blue:#339af0;--mono:'JetBrains Mono',monospace;--body:'Inter',system-ui,sans-serif;--radius:12px}
+/* Palette Kabylie — drapeau amazigh (bleu, jaune, vert + yaz ⵣ rouge) et
+   bijoux kabyles (argent, émaux, corail). Hommage à Matoub Lounès. */
+:root{--bg:#f3f6f8;--card:#ffffff;--card2:#edf2f4;--border:#d9e2e8;--accent:#1a7fc2;--accent2:#22a06b;--kab-blue:#1a7fc2;--kab-green:#22a06b;--kab-yellow:#dfa714;--kab-coral:#d94f3d;--text:#14232e;--muted:#7c8a94;--danger:#d94f3d;--success:#2f9e5f;--warn:#dfa714;--orange:#e0812f;--blue:#2a8bc9;--mono:'JetBrains Mono',monospace;--body:'Inter',system-ui,sans-serif;--radius:12px}
+/* Liseré aux couleurs du drapeau amazigh en haut de page */
+body::before{content:'';display:block;height:4px;background:linear-gradient(90deg,var(--kab-blue) 0 33.3%,var(--kab-yellow) 33.3% 66.6%,var(--kab-green) 66.6% 100%)}
+.logo-yaz{color:var(--kab-coral);-webkit-text-fill-color:var(--kab-coral);font-weight:800;margin-left:6px;font-family:var(--body)}
 body{background:var(--bg);color:var(--text);font-family:var(--body);min-height:100vh;-webkit-font-smoothing:antialiased}
 .container{max-width:1080px;margin:0 auto;padding:24px 20px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px 22px;margin-bottom:12px;transition:border-color .2s}
@@ -30,7 +35,7 @@ label{font-size:11px;color:var(--muted);margin-bottom:5px;display:block;letter-s
 .metric-val{font-size:26px;font-weight:700;font-family:var(--mono);letter-spacing:-1px}
 .metric-sub{font-size:11px;margin-top:4px}
 header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border)}
-.logo{font-size:22px;font-weight:800;font-family:var(--mono);letter-spacing:-1px;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.logo{font-size:22px;font-weight:800;font-family:var(--mono);letter-spacing:-1px;background:linear-gradient(135deg,var(--kab-blue) 0%,var(--kab-green) 60%,var(--kab-yellow) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .logo-sub{font-size:11px;color:var(--muted);font-weight:400;margin-left:10px;letter-spacing:1px;text-transform:uppercase}
 .tabs{display:flex;gap:0;margin-bottom:24px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:4px;overflow:hidden}
 .tab{flex:1;padding:10px 16px;font-size:12px;font-weight:600;color:var(--muted);background:none;border:none;border-radius:8px;cursor:pointer;font-family:var(--body);transition:all .2s;text-align:center}
@@ -45,14 +50,14 @@ header{display:flex;justify-content:space-between;align-items:center;margin-bott
 .action-row{display:flex;align-items:flex-start;gap:14px;transition:all .2s}
 .action-row:hover{border-color:var(--accent)!important}
 .action-score{font-size:15px;font-weight:700;color:var(--accent);flex-shrink:0;font-family:var(--mono);min-width:50px;text-align:right}
-.log-box{background:#f5f5f7;font-family:var(--mono);font-size:12px;max-height:300px;overflow-y:auto;padding:14px;border-radius:8px;border:1px solid var(--border)}
+.log-box{background:var(--card2);font-family:var(--mono);font-size:12px;max-height:300px;overflow-y:auto;padding:14px;border-radius:8px;border:1px solid var(--border)}
 .log-ok{color:#2d7a3a}.log-err{color:var(--danger)}.log-win{color:var(--success)}
-.region-btn{transition:all .15s}.region-btn.on{background:rgba(108,92,231,.15);border-color:var(--accent);color:var(--accent)}
+.region-btn{transition:all .15s}.region-btn.on{background:rgba(26,127,194,.13);border-color:var(--accent);color:var(--accent)}
 .cr-tab.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .up{color:var(--success);font-size:11px;font-weight:600}.down{color:var(--danger);font-size:11px;font-weight:600}
-.login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;background:radial-gradient(ellipse at 50% 0%,#e8e8f0 0%,var(--bg) 70%)}
+.login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;background:radial-gradient(ellipse at 50% 0%,#dfeaf0 0%,var(--bg) 70%)}
 .login-box{width:380px;padding:40px;border:1px solid var(--border)}
-.login-title{font-size:32px;font-weight:800;font-family:var(--mono);letter-spacing:-1px;text-align:center;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.login-title{font-size:32px;font-weight:800;font-family:var(--mono);letter-spacing:-1px;text-align:center;background:linear-gradient(135deg,var(--kab-blue) 0%,var(--kab-green) 60%,var(--kab-yellow) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .login-sub{font-size:12px;color:var(--muted);text-align:center;margin-top:6px;margin-bottom:28px;letter-spacing:1px;text-transform:uppercase}
 .error{color:var(--danger);font-size:12px;margin-bottom:12px}
 .hidden{display:none}
@@ -87,8 +92,8 @@ header{display:flex;justify-content:space-between;align-items:center;margin-bott
 <!-- LOGIN -->
 <div id="login-screen" class="login-wrap">
 <div class="card login-box">
-<div class="login-title">MatoubeAPP</div>
-<div class="login-sub">SEO Automation</div>
+<div class="login-title">MatoubeAPP<span class="logo-yaz">ⵣ</span></div>
+<div class="login-sub">SEO Automation · Azul</div>
 <label>Email</label>
 <input id="login-email" placeholder="admin@matoube.app" style="margin-bottom:12px">
 <label>Mot de passe</label>
@@ -103,8 +108,8 @@ header{display:flex;justify-content:space-between;align-items:center;margin-bott
 <div class="container">
 <header>
 <div style="display:flex;align-items:center">
-<span class="logo">MatoubeAPP</span>
-<span class="logo-sub">SEO Automation</span>
+<span class="logo">MatoubeAPP</span><span class="logo-yaz" title="ⵣ Yaz — en hommage à Matoub Lounès, le Rebelle">ⵣ</span>
+<span class="logo-sub">SEO Automation · Hommage à Matoub Lounès</span>
 </div>
 <button class="btn2 btn-sm" onclick="localStorage.removeItem('pbn_token');location.reload()">Déconnexion</button>
 </header>
@@ -182,7 +187,19 @@ const fmt=n=>n!=null?Number(n).toLocaleString('fr-FR'):'\u2014';
 const escAttr=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const esc=escAttr; // échappement texte (anti-XSS : mots-clés GSC, noms de sites...)
 // ─── Sélecteur de langues multilingue ──────────────────────────────────────
-const LANGS=[['fr','🇫🇷 Français'],['en','🇬🇧 Anglais'],['es','🇪🇸 Espagnol'],['de','🇩🇪 Allemand'],['it','🇮🇹 Italien'],['pt','🇵🇹 Portugais'],['nl','🇳🇱 Néerlandais'],['pl','🇵🇱 Polonais'],['ar','🇸🇦 Arabe'],['ru','🇷🇺 Russe'],['ca','Catalan'],['tr','🇹🇷 Turc']];
+// Catalogue aligné sur backend app/services/i18n.py (variantes régionales incluses)
+const LANGS=[
+['fr','🇫🇷 Français'],['fr-ca','🇨🇦 Français (Québec)'],['fr-be','🇧🇪 Français (Belgique)'],
+['en','🇬🇧 Anglais'],['en-gb','🇬🇧 Anglais (UK)'],['en-us','🇺🇸 Anglais (US)'],['en-au','🇦🇺 Anglais (Australie)'],
+['es','🇪🇸 Espagnol'],['es-mx','🇲🇽 Espagnol (Mexique)'],['es-ar','🇦🇷 Espagnol (Argentine)'],
+['de','🇩🇪 Allemand'],['de-at','🇦🇹 Allemand (Autriche)'],['de-ch','🇨🇭 Allemand (Suisse)'],
+['it','🇮🇹 Italien'],['pt','🇵🇹 Portugais'],['pt-br','🇧🇷 Portugais (Brésil)'],
+['nl','🇳🇱 Néerlandais'],['pl','🇵🇱 Polonais'],
+['ar','🇸🇦 Arabe'],['ar-ma','🇲🇦 Arabe (Maroc)'],
+['ru','🇷🇺 Russe'],['uk','🇺🇦 Ukrainien'],
+['zh','🇨🇳 Chinois (mandarin simplifié)'],['zh-tw','🇹🇼 Chinois traditionnel (Taïwan)'],['zh-hk','🇭🇰 Chinois (Hong Kong)'],
+['ja','🇯🇵 Japonais'],['ko','🇰🇷 Coréen'],
+['ca','Catalan'],['tr','🇹🇷 Turc'],['kab','ⵣ Kabyle']];
 // prefix = préfixe d'ids (ex 'geo' -> geo-lang-main, geo-lang-fr...)
 function langSelectorHtml(prefix,withSecondary){
 const mainOpts=LANGS.map(([c,n])=>`<option value="${c}"${c==='fr'?' selected':''}>${n}</option>`).join('');
@@ -1433,6 +1450,79 @@ const exEl=document.getElementById('gen-step-explain');
 if(exEl)exEl.innerHTML=`<div style="color:var(--text)">${esc(cur.explain)}</div><div style="color:var(--success);margin-top:3px">✔ Gain : ${esc(cur.gain)}</div>`;
 }
 
+// ─── Score qualité live du générateur (plus d'éléments = meilleur score) ───
+function _val(id){const el=document.getElementById(id);return el?el.value.trim():'';}
+function _chk(id){const el=document.getElementById(id);return !!(el&&el.checked);}
+function gComputeScore(){
+const parts=[];
+const add=(label,pts,max,tip)=>parts.push({label,pts:Math.round(pts),max,tip});
+// Fondations
+let f=0;if(_val('g-domain'))f+=5;if(_val('g-title'))f+=5;
+add('Fondations (domaine + titre)',f,10,f<10?'Renseignez le domaine et le titre du site':'');
+// Brief de contenu
+const mode=document.querySelector('input[name="g-gen-mode"]:checked');
+let b=0,btip='';
+if(mode&&mode.value==='concurrent'){const n=['g-comp-url1','g-comp-url2','g-comp-url3'].filter(i=>_val(i)).length;b=n?12+(n>=2?3:0):0;btip=n?'':'Ajoutez au moins 1 URL concurrente';}
+else{const L=_val('g-site-prompt').length;b=L>=100?15:L>=30?8:0;btip=L>=100?'':'Détaillez le brief (niche, pages, ton, services) : +'+(15-b)+' pts';}
+add('Brief de contenu',b,15,btip);
+// Palette
+const pal=_val('g-primary-color')?7:0;
+add('Couleur principale',pal,7,pal?'':'Choisissez une couleur : palette pro dérivée automatiquement');
+// Logo
+const lm=document.querySelector('input[name="g-logo-mode"]:checked');
+const lg=lm&&lm.value!=='none'?(lm.value==='url'&&!_val('g-logo-url')?0:8):0;
+add('Logo',lg,8,lg?'':'Un logo (IA ou URL) renforce marque et E-E-A-T');
+// Images
+let im=0;if(_chk('g-gen-images')){im=8;if((Number(_val('g-image-count'))||0)>=6)im=10;}
+add('Images du site',im,10,im?'':'Des images uniques différencient le site des templates');
+// Web Archive
+add('Structure Web Archive',_chk('g-webarchive')?5:0,5,'');
+// Multilingue
+const nl=Math.max(0,(langRead('g').languages||[]).length-1);
+add('Langues additionnelles',Math.min(8,nl*4),8,nl?'':'Chaque langue = une audience Google supplémentaire');
+// E-E-A-T
+let e=0,etips=[];
+if(_chk('g-eat-enabled')){
+e+=5;
+const nap=[['g-biz-name','nom'],['g-biz-address','adresse'],['g-biz-phone','téléphone'],['g-biz-email','email']];
+const missing=nap.filter(([id])=>!_val(id)).map(([,l])=>l);
+e+=(4-missing.length)*3;
+if(missing.length)etips.push('NAP incomplet : '+missing.join(', '));
+if(_val('g-biz-lat')&&_val('g-biz-lng'))e+=4;else etips.push('coordonnées GPS (carte + LocalBusiness)');
+if(_val('g-biz-hours'))e+=4;else etips.push('horaires d\'ouverture');
+const blocs=['g-eat-faq','g-eat-reviews','g-eat-hours','g-eat-map','g-eat-reassurance','g-eat-howit'].filter(_chk).length;
+e+=blocs*2;
+if(blocs<6)etips.push((6-blocs)+' bloc(s) E-E-A-T non coché(s)');
+}else etips.push('Activez E-E-A-T : le levier confiance n°1 pour Google');
+add('E-E-A-T (confiance Google)',e,37,etips.join(' · '));
+const score=parts.reduce((a,p)=>a+p.pts,0);
+return {score:Math.min(100,score),parts};
+}
+function scorePanelHtml(score,parts){
+const col=scoreColor(score);
+const verdict=score>=80?'Excellent — configuration premium':score>=60?'Correct — peut mieux faire':score>=35?'Basique — ajoutez des éléments':'Minimal';
+const tips=parts.filter(p=>p.pts<p.max&&p.tip).sort((a,b)=>(b.max-b.pts)-(a.max-a.pts)).slice(0,3);
+let h=`<div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+<div style="text-align:center;flex-shrink:0">
+<div style="font-size:36px;font-weight:800;font-family:var(--mono);color:${col};line-height:1">${score}<span style="font-size:15px;color:var(--muted)">/100</span></div>
+<div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:${col};font-weight:700;margin-top:2px">Score qualité</div>
+</div>
+<div style="flex:1;min-width:230px">
+<div style="height:8px;background:var(--card2);border-radius:4px;overflow:hidden;margin-bottom:6px"><div style="width:${score}%;height:100%;background:${col};transition:width .3s"></div></div>
+<div style="font-size:11.5px;color:var(--text);font-weight:600;margin-bottom:3px">${verdict}</div>
+<div style="display:flex;gap:5px;flex-wrap:wrap">`;
+parts.forEach(p=>{const pc=p.pts>=p.max?'var(--success)':p.pts>0?'var(--warn)':'var(--muted)';
+h+=`<span title="${esc(p.tip||p.label)}" style="font-size:10px;padding:2px 7px;border-radius:9px;background:var(--card2);color:${pc};font-family:var(--mono)">${esc(p.label.split(' (')[0])} ${p.pts}/${p.max}</span>`;});
+h+=`</div>`;
+if(tips.length)h+=`<div style="font-size:11px;color:var(--muted);margin-top:5px">💡 ${tips.map(t=>esc(t.tip)).join(' · ')}</div>`;
+h+=`</div></div>`;
+return h;
+}
+function gRenderScore(){
+const el=document.getElementById('gen-score-panel');if(!el)return;
+const {score,parts}=gComputeScore();
+el.innerHTML=scorePanelHtml(score,parts);
+}
 let _genPreviewDevice='desktop';
 async function genPreview(){
 const btn=document.getElementById('gen-preview-btn');
@@ -1465,9 +1555,11 @@ const w=_genPreviewDevice==='mobile'?390:_genPreviewDevice==='tablet'?768:'100%'
 const mx=_genPreviewDevice==='desktop'?'100%':w+'px';
 const dbtn=(dev,lbl)=>`<button class="btn2 btn-sm" style="${_genPreviewDevice===dev?'background:var(--accent);color:#fff':''}" onclick="genSetDevice('${dev}')">${lbl}</button>`;
 const blob=`data:text/html;charset=utf-8,${encodeURIComponent(_genPreviewHtml)}`;
+const sc=gComputeScore();
+const wrapScoreBadge=`<span style="font-size:12px;font-weight:800;font-family:var(--mono);color:${scoreColor(sc.score)};background:var(--card2);padding:3px 10px;border-radius:10px" title="Score qualité de la configuration — ajoutez des éléments (logo, images, E-E-A-T, langues) pour l'améliorer">Score ${sc.score}/100</span>`;
 wrap.innerHTML=`<div class="card" style="margin-bottom:14px;padding:12px">
 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-<div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;font-weight:600;color:var(--text)">Aperçu</span>${dbtn('desktop','Desktop')}${dbtn('tablet','Tablette')}${dbtn('mobile','Mobile')}</div>
+<div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;font-weight:600;color:var(--text)">Aperçu</span>${wrapScoreBadge}${dbtn('desktop','Desktop')}${dbtn('tablet','Tablette')}${dbtn('mobile','Mobile')}</div>
 <div style="display:flex;gap:6px"><a class="btn2 btn-sm" href="${blob}" target="_blank" rel="noopener">Ouvrir dans un onglet</a><button class="btn2 btn-sm" onclick="genPreview()">Régénérer</button></div>
 </div>
 <div style="background:var(--card2);border-radius:8px;padding:${_genPreviewDevice==='desktop'?'0':'14px'};display:flex;justify-content:center;overflow:auto">
@@ -1482,7 +1574,8 @@ const stepBody=`style="padding:18px 22px;background:var(--card);border-top:1px s
 const stepNum=`style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;font-weight:700;margin-right:10px;flex-shrink:0"`;
 const chevron=`<span class="geo-chevron" style="transition:transform .2s;display:inline-block;font-size:12px;color:var(--muted)">&#9660;</span>`;
 
-let h=`<div class="section-title mb-12">Generateur WordPress</div>`;
+let h=`<div class="section-title mb-12">Generateur WordPress</div>
+<div class="card mb-12" id="gen-score-panel" title="Score qualité : plus vous ajoutez d'éléments (logo, images, E-E-A-T, langues...), plus le site généré sera complet et crédible pour Google."></div>`;
 
 // Section 1 - Site & Domaine
 h+=`<div ${stepStyle}>
@@ -1495,7 +1588,7 @@ ${chevron}
 <div><label>Domaine</label><input id="g-domain" placeholder="monsite.fr"></div>
 <div><label>Titre du site</label><input id="g-title" placeholder="Mon Site"></div>
 </div>
-<div class="grid2 mb-12">`+langSelectorHtml('g',false)+`</div>
+<div class="grid2 mb-12">`+langSelectorHtml('g',true)+`</div>
 <div class="grid2 mb-12">
 <div><label>Admin user</label><input id="g-admin-user" value="admin"></div>
 <div><label>Admin email</label><input id="g-admin-email" placeholder="admin@monsite.fr"></div>
@@ -1691,6 +1784,12 @@ document.getElementById('g-logo-url-wrap').classList.toggle('hidden',m!=='url');
 });
 });
 gPalettePreview();
+langSyncMain('g');
+// Score qualité live : recalcul à chaque saisie/coche/clic dans l'onglet
+const tab2=document.getElementById('tab-2');
+let _gsT=null;const _gsUpd=()=>{if(_gsT)clearTimeout(_gsT);_gsT=setTimeout(gRenderScore,200);};
+['input','change','click'].forEach(ev=>tab2.addEventListener(ev,_gsUpd));
+gRenderScore();
 }
 
 async function runFullInstall(){
@@ -1736,7 +1835,8 @@ et_username:document.getElementById('g-et-user').value.trim(),
 et_api_key:document.getElementById('g-et-key').value.trim(),
 generation_mode:genMode,
 site_prompt:document.getElementById('g-site-prompt').value.trim(),
-main_language:document.getElementById('g-lang-main').value,
+main_language:langRead('g').main_language,
+languages:langRead('g').languages,
 primary_color:(document.getElementById('g-primary-color').value||'').trim(),
 competitor_urls:compUrls,
 use_webarchive:document.getElementById('g-webarchive').checked,
@@ -1812,6 +1912,41 @@ document.getElementById('gen-logs').innerHTML=`<div class="card log-box"><div cl
 // GEOLOC
 let geoRegions=[],geoDepts=[],selRegs=[],selDepts=[],geoPreview=null;
 
+// Score qualité live des pages géoloc
+function geoComputeScore(){
+const parts=[];
+const add=(label,pts,max,tip)=>parts.push({label,pts:Math.round(pts),max,tip});
+let f=0;if(_val('geoloc-domain'))f+=4;if(_val('geo-kw'))f+=4;if(_val('geo-sitename'))f+=2;
+add('Fondations (domaine + mot-clé)',f,10,f<10?'Renseignez domaine, mot-clé principal et nom du site':'');
+add('Ciblage géographique',(selRegs.length||selDepts.length)?8:0,8,(selRegs.length||selDepts.length)?'':'Sélectionnez régions ou départements');
+const ai=_chk('geo-ai-content');
+add('Contenu IA (Claude)',ai?12:0,12,ai?'':'Le contenu IA structuré est le cœur de la qualité');
+const nv=Number(_val('geo-variantes'))||1;
+add('Variantes anti-duplicate',nv>=3?8:nv>=2?5:0,8,nv>=3?'':'3 variantes minimum contre le duplicate à grande échelle');
+add('FAQ Google (PAA)',_chk('geo-paa')?8:0,8,_chk('geo-paa')?'':'Les vraies questions Google visent la position 0');
+add('Information gain (SERP)',_chk('geo-serp')?8:0,8,_chk('geo-serp')?'':'Analyser les pages qui rankent pour les dépasser');
+add('Juge qualité IA',_chk('geo-quality')?7:0,7,_chk('geo-quality')?'':'Filet de sécurité avant import : pages faibles signalées');
+add('Analyse concurrentielle',_chk('geo-concurrence')?4:0,4,'');
+add('Données locales réelles',_chk('geo-local')?6:0,6,_chk('geo-local')?'':'Communes voisines réelles = anti-doorway');
+add('Schema.org',_chk('geo-schema')?6:0,6,'');
+add('Sitemaps segmentés',_chk('geo-sitemaps')?4:0,4,'');
+add('Anti-footprint réseau',_chk('geo-vary')?3:0,3,'');
+add('Hubs départements',_chk('geo-departements')?4:0,4,_chk('geo-departements')?'':'Les hubs départementaux structurent le silo SEO');
+let nap=0;
+if(_chk('geo-realreviews')){nap=2;['geo-nap-name','geo-nap-phone','geo-nap-address'].forEach(id=>{if(_val(id))nap+=2;});}
+add('NAP réel (confiance)',Math.min(6,nap),6,nap>=6?'':'Nom + téléphone + adresse réels = E-E-A-T local');
+const nl=Math.max(0,(langRead('geo').languages||[]).length-1);
+add('Langues additionnelles',Math.min(8,nl*4),8,nl?'':'Chaque langue = une audience Google supplémentaire');
+const raw=parts.reduce((a,p)=>a+p.pts,0);
+const maxTot=parts.reduce((a,p)=>a+p.max,0);
+return {score:Math.min(100,Math.round(raw/maxTot*100)),parts};
+}
+function geoRenderScore(){
+const el=document.getElementById('geo-score-panel');if(!el)return;
+const {score,parts}=geoComputeScore();
+el.innerHTML=scorePanelHtml(score,parts);
+}
+
 async function loadGeoloc(){
 let regions;
 try{regions=await apiFetch('/geoloc/regions');}catch(e){document.getElementById('tab-3').innerHTML=`<div class="card" style="color:var(--danger)">Erreur : ${e.message}</div>`;return;}
@@ -1830,7 +1965,8 @@ const geoOptCard=(id,title,desc,checked)=>`<label style="display:flex;gap:10px;a
 <span style="display:block;font-size:11px;line-height:1.5;color:var(--muted);text-transform:none;letter-spacing:0;font-weight:400">${desc}</span></span>
 </label>`;
 
-let h=`<div class="section-title mb-12">Pages g\u00e9olocalis\u00e9es</div>`;
+let h=`<div class="section-title mb-12">Pages g\u00e9olocalis\u00e9es</div>
+<div class="card mb-12" id="geo-score-panel" title="Score qualité : plus vous activez d'options SEO (PAA, information gain, juge qualité, données locales, langues...), plus les pages générées seront solides."></div>`;
 
 // --- STEP 1: Configuration ---
 h+=`<div ${stepStyle}>
@@ -1950,8 +2086,8 @@ ${geoOptCard('geo-realreviews','Vrais avis (schema ★)','N\'active les étoiles
 </div>
 <div id="geo-colors-body" class="hidden" style="background:var(--card2);padding:14px 16px;border-radius:0 0 8px 8px;border-top:1px solid var(--border)">
 <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
-<div><label>Primaire</label><input type="color" id="geo-color-primary" value="#6c5ce7" style="height:36px;padding:2px;cursor:pointer"></div>
-<div><label>Secondaire</label><input type="color" id="geo-color-secondary" value="#a29bfe" style="height:36px;padding:2px;cursor:pointer"></div>
+<div><label>Primaire</label><input type="color" id="geo-color-primary" value="#1a7fc2" style="height:36px;padding:2px;cursor:pointer"></div>
+<div><label>Secondaire</label><input type="color" id="geo-color-secondary" value="#22a06b" style="height:36px;padding:2px;cursor:pointer"></div>
 <div><label>Light</label><input type="color" id="geo-color-light" value="#f5f5f7" style="height:36px;padding:2px;cursor:pointer"></div>
 <div><label>Neutre</label><input type="color" id="geo-color-neutre" value="#1a1a2e" style="height:36px;padding:2px;cursor:pointer"></div>
 <div><label>CTA</label><input type="color" id="geo-color-cta" value="#51cf66" style="height:36px;padding:2px;cursor:pointer"></div>
@@ -2003,6 +2139,11 @@ if(napChk)napChk.addEventListener('change',()=>{document.getElementById('geo-nap
 ['geo-ai-content','geo-variantes','geo-paa','geo-serp','geo-quality','geo-concurrence'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('change',geoEstimateCost);});
 geoEstimateCost();
 langSyncMain('geo');
+// Score qualité live géoloc
+const tab3=document.getElementById('tab-3');
+let _geoST=null;const _geoSU=()=>{if(_geoST)clearTimeout(_geoST);_geoST=setTimeout(geoRenderScore,200);};
+['input','change','click'].forEach(ev=>tab3.addEventListener(ev,_geoSU));
+geoRenderScore();
 }
 
 function geoToggleStep(id,headerEl){
@@ -2557,9 +2698,27 @@ renderCrawl();
 },1500);
 }
 function crCard(label,val,col){return `<div style="padding:12px 8px;text-align:center;border-right:1px solid var(--border)"><div style="font-size:20px;font-weight:700;font-family:var(--mono);color:${col||'var(--text)'}">${val}</div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-top:2px">${label}</div></div>`;}
+function scoreColor(v){return v>=80?'var(--success)':v>=60?'var(--warn)':'var(--danger)';}
 function renderCrawl(){
 const r=_crawlReport,s=r.summary;
-let h=`<div class="card" style="padding:0;overflow:hidden;margin-bottom:16px"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr))">
+let h='';
+// Score SEO global du site
+const gs=s.seo_score||{};
+if(gs.score!=null){
+h+=`<div class="card mb-16" style="display:flex;gap:20px;align-items:center;flex-wrap:wrap">
+<div style="text-align:center;flex-shrink:0">
+<div style="font-size:42px;font-weight:800;font-family:var(--mono);color:${scoreColor(gs.score)};line-height:1">${gs.score}<span style="font-size:17px;color:var(--muted)">/100</span></div>
+<div style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:${scoreColor(gs.score)};font-weight:700;margin-top:3px">${esc(gs.verdict||'')}</div>
+<div style="font-size:10px;color:var(--muted);margin-top:2px">Score SEO du site</div>
+</div>
+<div style="flex:1;min-width:220px">
+<div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:3px"><span style="color:var(--muted)">Contenu &amp; technique (moyenne des pages)</span><b style="font-family:var(--mono);color:${scoreColor(gs.pages_avg||0)}">${gs.pages_avg!=null?gs.pages_avg:'—'}</b></div>
+<div style="height:6px;background:var(--card2);border-radius:3px;overflow:hidden;margin-bottom:8px"><div style="width:${gs.pages_avg||0}%;height:100%;background:${scoreColor(gs.pages_avg||0)}"></div></div>
+<div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:3px"><span style="color:var(--muted)">Maillage interne</span><b style="font-family:var(--mono);color:${scoreColor(gs.maillage||0)}">${gs.maillage!=null?gs.maillage:'—'}</b></div>
+<div style="height:6px;background:var(--card2);border-radius:3px;overflow:hidden"><div style="width:${gs.maillage||0}%;height:100%;background:${scoreColor(gs.maillage||0)}"></div></div>
+</div></div>`;
+}
+h+=`<div class="card" style="padding:0;overflow:hidden;margin-bottom:16px"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr))">
 ${crCard('Pages',s.total_pages)}
 ${crCard('Erreurs 4xx/5xx',s.errors_4xx_5xx,s.errors_4xx_5xx?'var(--danger)':'var(--success)')}
 ${crCard('Sans Title',s.missing_title,s.missing_title?'var(--warn)':'var(--success)')}
@@ -2603,7 +2762,7 @@ else if(f==='city')pages=pages.filter(p=>p.city);
 else if(f==='i18n')pages=pages.filter(p=>p.hreflang_issue||!p.html_lang||p.hreflang_count>0);
 let h=`<div class="card" style="padding:0;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
 <thead><tr style="background:var(--card2);text-align:left">
-<th style="padding:8px">URL</th><th style="padding:8px">Code</th><th style="padding:8px">Langue</th><th style="padding:8px" title="Versions hreflang">hreflang</th><th style="padding:8px">Title</th><th style="padding:8px">H1</th><th style="padding:8px">Ville</th><th style="padding:8px" title="Liens entrants internes">Inlinks</th><th style="padding:8px" title="PageRank interne (0-100) : force de la page dans le maillage">PR</th><th style="padding:8px" title="Profondeur : nombre de clics depuis l'accueil">Prof.</th><th style="padding:8px">Mots</th><th style="padding:8px">Sim.</th><th style="padding:8px">Problèmes</th>
+<th style="padding:8px">URL</th><th style="padding:8px" title="Score SEO de la page (0-100)">Score</th><th style="padding:8px">Code</th><th style="padding:8px">Langue</th><th style="padding:8px" title="Versions hreflang">hreflang</th><th style="padding:8px">Title</th><th style="padding:8px">H1</th><th style="padding:8px">Ville</th><th style="padding:8px" title="Liens entrants internes">Inlinks</th><th style="padding:8px" title="PageRank interne (0-100) : force de la page dans le maillage">PR</th><th style="padding:8px" title="Profondeur : nombre de clics depuis l'accueil">Prof.</th><th style="padding:8px">Mots</th><th style="padding:8px">Sim.</th><th style="padding:8px">Problèmes</th>
 </tr></thead><tbody>`;
 pages.slice(0,500).forEach(p=>{
 const path=p.url.replace(/^https?:\/\/[^/]+/,'')||'/';
@@ -2611,6 +2770,7 @@ const stCol=p.status>=400?'var(--danger)':p.status>=300?'var(--warn)':'var(--suc
 const simCol=p.max_similarity>=90?'var(--danger)':p.max_similarity>=70?'var(--warn)':'var(--muted)';
 h+=`<tr style="border-top:1px solid var(--border)">
 <td style="padding:7px 8px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(p.url)}">${esc(path)}</td>
+<td style="padding:7px 8px;text-align:center;font-weight:700;font-family:var(--mono);color:${p.seo_score!=null?scoreColor(p.seo_score):'var(--muted)'}">${p.seo_score!=null?p.seo_score:'—'}</td>
 <td style="padding:7px 8px;font-weight:700;color:${stCol}">${p.status}</td>
 <td style="padding:7px 8px;text-align:center;color:${p.language?'var(--accent)':'var(--muted)'};font-weight:600">${esc((p.language||'—').toUpperCase())}</td>
 <td style="padding:7px 8px;text-align:center;font-family:var(--mono);color:${p.hreflang_count?'var(--success)':'var(--muted)'}">${p.hreflang_count||'—'}</td>

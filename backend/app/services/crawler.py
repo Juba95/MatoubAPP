@@ -456,6 +456,7 @@ class SiteCrawler:
         inlinks = maillage.get("inlinks_by_url", {})
         for p in pages:
             p["inlinks"] = inlinks.get(p["url"], 0)
+            p["seo_score"] = _page_score(p)
 
         html_pages = [p for p in pages if p.get("content_type") == "text/html"]
         summary = {
@@ -478,6 +479,7 @@ class SiteCrawler:
             "cannibalization_groups": len(maillage.get("cannibalization", [])),
             "maillage_health": maillage.get("health_score", {}).get("score"),
             "pages_with_issues": sum(1 for p in pages if p.get("issues")),
+            "seo_score": _site_score(html_pages, maillage),
         }
         # Multilingue
         lang_counts: dict[str, int] = {}
@@ -593,6 +595,61 @@ def _page_issues(p: dict) -> list[str]:
     return issues
 
 
+# Pénalité par type de problème (score page = 100 - somme des pénalités)
+_ISSUE_PENALTIES = [
+    ("HTTP ", 100), ("Noindex", 40),
+    ("Title manquant", 18), ("Title trop long", 5), ("Title trop court", 5),
+    ("Meta description manquante", 12), ("Meta desc trop longue", 4),
+    ("H1 manquant", 12), ("H1 multiples", 6), ("Title ≠ H1", 4),
+    ("Contenu léger", 15), ("Quasi-doublon", 20),
+    ("Ville absente du Title", 8), ("Ville absente du H1", 5),
+    ("Attribut lang manquant", 3), ("hreflang :", 6),
+]
+
+
+def _page_score(p: dict) -> int:
+    """Score SEO d'une page (0-100), dérivé des problèmes + maillage."""
+    if p.get("status", 0) >= 400:
+        return 0
+    if p.get("content_type") != "text/html":
+        return 100  # ressource non HTML : pas noté
+    score = 100
+    for issue in p.get("issues", []):
+        for prefix, penalty in _ISSUE_PENALTIES:
+            if issue.startswith(prefix):
+                score -= penalty
+                break
+    # Maillage : orpheline / inatteignable / trop profonde
+    if p.get("inlinks", 0) == 0:
+        score -= 10
+    depth = p.get("click_depth", 0)
+    if depth == -1:
+        score -= 8
+    elif depth >= 4:
+        score -= 5
+    # Bonus contenu riche
+    if p.get("word_count", 0) >= 800:
+        score += 5
+    return max(0, min(100, score))
+
+
+def _site_score(html_pages: list[dict], maillage: dict) -> dict:
+    """Score SEO global du site : contenu/technique (70%) + maillage (30%)."""
+    scored = [p["seo_score"] for p in html_pages if p.get("seo_score") is not None]
+    if not scored:
+        return {"score": None, "pages_avg": None, "maillage": None, "verdict": ""}
+    pages_avg = sum(scored) / len(scored)
+    mh = (maillage.get("health_score") or {}).get("score")
+    global_score = round(pages_avg * 0.7 + (mh if mh is not None else pages_avg) * 0.3)
+    return {
+        "score": global_score,
+        "pages_avg": round(pages_avg),
+        "maillage": mh,
+        "verdict": ("excellent" if global_score >= 80
+                    else "correct" if global_score >= 60 else "à améliorer"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Export Excel
 # ---------------------------------------------------------------------------
@@ -609,7 +666,7 @@ def build_crawl_excel(report: dict) -> bytes:
     ws = wb.active
     ws.title = "Pages"
     headers = [
-        "URL", "Status", "Type", "Indexable", "Langue", "lang HTML",
+        "URL", "Score SEO", "Status", "Type", "Indexable", "Langue", "lang HTML",
         "Versions hreflang", "Title", "Long. Title",
         "Meta description", "Long. desc", "H1", "Nb H1", "Nb H2", "Nb H3",
         "Mots", "Canonical", "Meta robots", "Ville détectée",
@@ -621,7 +678,7 @@ def build_crawl_excel(report: dict) -> bytes:
     for p in report["pages"]:
         depth = p.get("click_depth", -1)
         ws.append([
-            p["url"], p.get("status"), p.get("content_type"),
+            p["url"], p.get("seo_score", ""), p.get("status"), p.get("content_type"),
             "Oui" if p.get("indexable", True) else "Non",
             p.get("language", ""), p.get("html_lang", ""), p.get("hreflang_count", 0),
             p.get("title", ""), p.get("title_len", 0),
