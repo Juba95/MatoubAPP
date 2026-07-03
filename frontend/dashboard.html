@@ -11,10 +11,13 @@
 /* Palette : bleu, jaune, vert (drapeau amazigh) + corail des bijoux kabyles,
    fond argenté. */
 :root{--bg:#f3f6f8;--card:#ffffff;--card2:#edf2f4;--border:#d9e2e8;--accent:#1a7fc2;--accent2:#22a06b;--kab-blue:#1a7fc2;--kab-green:#22a06b;--kab-yellow:#dfa714;--kab-coral:#d94f3d;--text:#14232e;--muted:#7c8a94;--danger:#d94f3d;--success:#2f9e5f;--warn:#dfa714;--orange:#e0812f;--blue:#2a8bc9;--mono:'JetBrains Mono',monospace;--body:'Inter',system-ui,sans-serif;--radius:12px}
-/* Liseré aux couleurs du drapeau amazigh en haut de page */
-body::before{content:'';display:block;height:4px;background:linear-gradient(90deg,var(--kab-blue) 0 33.3%,var(--kab-yellow) 33.3% 66.6%,var(--kab-green) 66.6% 100%)}
-body{background:var(--bg);color:var(--text);font-family:var(--body);min-height:100vh;-webkit-font-smoothing:antialiased}
-.container{max-width:1080px;margin:0 auto;padding:24px 20px}
+/* Réserve en permanence la place de la barre de défilement : le contenu centré
+   ne saute plus horizontalement quand elle apparaît/disparaît (changement d'onglet, zoom). */
+html{scrollbar-gutter:stable;overflow-x:hidden}
+/* Liseré aux couleurs du drapeau amazigh, fixé en haut (ne bouge pas au scroll) */
+body::before{content:'';position:fixed;top:0;left:0;right:0;height:4px;z-index:200;background:linear-gradient(90deg,var(--kab-blue) 0 33.3%,var(--kab-yellow) 33.3% 66.6%,var(--kab-green) 66.6% 100%)}
+body{background:var(--bg);color:var(--text);font-family:var(--body);min-height:100vh;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+.container{max-width:1280px;margin:0 auto;padding:28px clamp(16px,4vw,40px)}
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px 22px;margin-bottom:12px;transition:border-color .2s}
 input,select,textarea{width:100%;padding:10px 14px;background:var(--card2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-family:var(--body);outline:none;transition:border-color .2s}
 input:focus,select:focus,textarea:focus{border-color:var(--accent)}
