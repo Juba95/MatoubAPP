@@ -112,6 +112,42 @@ def _shingles(text: str, n: int = 5) -> frozenset:
     )
 
 
+# Mots très fréquents par langue (heuristique de détection, gratuite)
+_LANG_STOPWORDS = {
+    "fr": {"le", "la", "les", "de", "des", "un", "une", "et", "est", "vous", "nous",
+           "pour", "dans", "avec", "sur", "que", "qui", "notre", "votre", "plus", "à"},
+    "en": {"the", "and", "of", "to", "in", "for", "you", "we", "our", "your", "with",
+           "is", "are", "this", "that", "on", "at", "by", "from", "more"},
+    "es": {"el", "la", "los", "las", "de", "un", "una", "y", "es", "para", "con",
+           "que", "su", "nuestro", "por", "más", "en", "se", "como", "del"},
+    "de": {"der", "die", "das", "und", "ist", "für", "sie", "wir", "unser", "mit",
+           "von", "auf", "den", "im", "ein", "eine", "zu", "auch", "als", "mehr"},
+    "it": {"il", "la", "di", "un", "una", "e", "che", "per", "con", "non", "sono",
+           "nostro", "vostro", "più", "come", "questo", "in", "del", "dei", "gli"},
+    "pt": {"o", "a", "os", "as", "de", "um", "uma", "e", "que", "para", "com", "não",
+           "nosso", "por", "mais", "em", "do", "da", "como", "seu"},
+    "nl": {"de", "het", "een", "van", "en", "is", "voor", "met", "op", "wij", "onze",
+           "uw", "dat", "die", "aan", "te", "in", "zijn", "meer", "ook"},
+}
+
+
+def detect_language(html_lang: str, text: str) -> str:
+    """Détecte la langue d'une page : attribut html lang en priorité, sinon
+    heuristique par mots fréquents (gratuit, aucune dépendance)."""
+    if html_lang:
+        code = re.split(r"[-_]", html_lang.strip().lower())[0]
+        if code in _LANG_STOPWORDS or len(code) == 2:
+            return code
+    words = _WORD_RE.findall(text.lower())[:1500]
+    if len(words) < 20:
+        return ""
+    wset = set(words)
+    scores = {lg: sum(1 for w in words if w in sw) for lg, sw in _LANG_STOPWORDS.items()}
+    best = max(scores, key=scores.get)
+    # Nécessite un minimum de signal pour ne pas deviner au hasard
+    return best if scores[best] >= max(3, len(words) * 0.02) else ""
+
+
 # ---------------------------------------------------------------------------
 # Crawler
 # ---------------------------------------------------------------------------
@@ -206,6 +242,7 @@ class SiteCrawler:
             "canonical": "", "meta_robots": "", "indexable": True,
             "internal_links": [], "external_links": 0, "anchors_out": [],
             "content_type": "", "error": "",
+            "html_lang": "", "language": "", "hreflangs": [], "hreflang_count": 0,
         }
         try:
             r = client.get(url)
@@ -219,6 +256,17 @@ class SiteCrawler:
             return data
 
         soup = BeautifulSoup(r.text, "html.parser")
+
+        # Langue déclarée (<html lang="...">) + versions hreflang
+        html_tag = soup.find("html")
+        data["html_lang"] = (html_tag.get("lang", "").strip() if html_tag else "")
+        hreflangs = []
+        for link in soup.find_all("link", attrs={"rel": re.compile(r"alternate", re.I)}):
+            hl = (link.get("hreflang") or "").strip()
+            if hl:
+                hreflangs.append({"hreflang": hl.lower(), "href": urljoin(url, link.get("href", ""))})
+        data["hreflangs"] = hreflangs
+        data["hreflang_count"] = len(hreflangs)
 
         title_tag = soup.find("title")
         data["title"] = title_tag.get_text(strip=True) if title_tag else ""
@@ -257,6 +305,7 @@ class SiteCrawler:
         text = body.get_text(" ", strip=True)
         data["word_count"] = len(_WORD_RE.findall(text))
         data["_text"] = text[:20000]     # pour la proximité (non exposé)
+        data["language"] = detect_language(data["html_lang"], text)
 
         internal, external = [], 0
         anchors = []
@@ -364,8 +413,11 @@ class SiteCrawler:
         from app.services.internal_linking import analyze_internal_linking
 
         pages = list(self.pages.values())
+        # Audit hreflang (réciprocité + x-default) sur l'ensemble des pages
+        hreflang_audit = _audit_hreflang(pages)
         for p in pages:
             p["internal_out"] = len(p.get("internal_links", []))
+            p["hreflang_issue"] = hreflang_audit["by_url"].get(p["url"], "")
             p["issues"] = _page_issues(p)
         maillage = analyze_internal_linking(pages, self.start_url)
         # Injecte les inlinks calculés par le maillage dans chaque page
@@ -391,7 +443,65 @@ class SiteCrawler:
             "orphan_pages": len(maillage.get("orphans", [])),
             "pages_with_issues": sum(1 for p in pages if p.get("issues")),
         }
+        # Multilingue
+        lang_counts: dict[str, int] = {}
+        for p in html_pages:
+            lg = p.get("language") or "?"
+            lang_counts[lg] = lang_counts.get(lg, 0) + 1
+        summary["languages"] = lang_counts
+        summary["is_multilingual"] = len([l for l in lang_counts if l != "?"]) > 1
+        summary["missing_html_lang"] = sum(1 for p in html_pages if not p.get("html_lang"))
+        summary["pages_with_hreflang"] = sum(1 for p in html_pages if p.get("hreflang_count", 0) > 0)
+        summary["hreflang_issues"] = hreflang_audit["issue_count"]
+        summary["missing_hreflang_multilingual"] = (
+            sum(1 for p in html_pages if p.get("hreflang_count", 0) == 0)
+            if summary["is_multilingual"] else 0
+        )
         return {"summary": summary, "pages": pages, "maillage": maillage}
+
+
+def _audit_hreflang(pages: list[dict]) -> dict:
+    """Vérifie la réciprocité des hreflang et la présence de x-default.
+
+    Google exige que si A déclare une alternative B, B déclare aussi A.
+    Retourne {by_url: {url: message}, issue_count}.
+    """
+    def _norm_url(u: str) -> str:
+        return u.split("#")[0].rstrip("/")
+
+    known = {_norm_url(p["url"]) for p in pages}
+    # href déclarés par chaque page (hors x-default)
+    declared: dict[str, set] = {}
+    has_xdefault: dict[str, bool] = {}
+    for p in pages:
+        u = _norm_url(p["url"])
+        hrefs, xdef = set(), False
+        for h in p.get("hreflangs", []):
+            if h["hreflang"] == "x-default":
+                xdef = True
+            else:
+                hrefs.add(_norm_url(h["href"]))
+        declared[u] = hrefs
+        has_xdefault[u] = xdef
+
+    by_url: dict[str, str] = {}
+    for p in pages:
+        u = _norm_url(p["url"])
+        hrefs = declared.get(u, set())
+        if not hrefs:
+            continue
+        problems = []
+        if not has_xdefault[u]:
+            problems.append("x-default absent")
+        for target in hrefs:
+            if target == u:
+                continue
+            if target in known and u not in declared.get(target, set()):
+                problems.append(f"non réciproque ({target.rsplit('/', 1)[-1] or target})")
+                break  # un exemple suffit
+        if problems:
+            by_url[p["url"]] = " ; ".join(problems)
+    return {"by_url": by_url, "issue_count": len(by_url)}
 
 
 def _title_h1_similar(title: str, h1: str) -> bool:
@@ -440,6 +550,10 @@ def _page_issues(p: dict) -> list[str]:
         issues.append("Ville absente du Title")
     if p.get("city") and not p.get("city_in_h1"):
         issues.append("Ville absente du H1")
+    if not p.get("html_lang"):
+        issues.append("Attribut lang manquant")
+    if p.get("hreflang_issue"):
+        issues.append(f"hreflang : {p['hreflang_issue']}")
     return issues
 
 
@@ -459,7 +573,8 @@ def build_crawl_excel(report: dict) -> bytes:
     ws = wb.active
     ws.title = "Pages"
     headers = [
-        "URL", "Status", "Type", "Indexable", "Title", "Long. Title",
+        "URL", "Status", "Type", "Indexable", "Langue", "lang HTML",
+        "Versions hreflang", "Title", "Long. Title",
         "Meta description", "Long. desc", "H1", "Nb H1", "Nb H2", "Nb H3",
         "Mots", "Canonical", "Meta robots", "Ville détectée",
         "Ville dans Title", "Title=H1", "Liens internes (out)", "Inlinks",
@@ -470,6 +585,7 @@ def build_crawl_excel(report: dict) -> bytes:
         ws.append([
             p["url"], p.get("status"), p.get("content_type"),
             "Oui" if p.get("indexable", True) else "Non",
+            p.get("language", ""), p.get("html_lang", ""), p.get("hreflang_count", 0),
             p.get("title", ""), p.get("title_len", 0),
             p.get("meta_description", ""), p.get("desc_len", 0),
             p.get("h1", ""), p.get("h1_count", 0), p.get("h2_count", 0), p.get("h3_count", 0),

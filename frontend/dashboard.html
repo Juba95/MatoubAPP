@@ -181,6 +181,33 @@ const fmt=n=>n!=null?Number(n).toLocaleString('fr-FR'):'\u2014';
 // dans une valeur (ex: instructions Claude) cassait tout le panneau de config.
 const escAttr=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const esc=escAttr; // échappement texte (anti-XSS : mots-clés GSC, noms de sites...)
+// ─── Sélecteur de langues multilingue ──────────────────────────────────────
+const LANGS=[['fr','🇫🇷 Français'],['en','🇬🇧 Anglais'],['es','🇪🇸 Espagnol'],['de','🇩🇪 Allemand'],['it','🇮🇹 Italien'],['pt','🇵🇹 Portugais'],['nl','🇳🇱 Néerlandais'],['pl','🇵🇱 Polonais'],['ar','🇸🇦 Arabe'],['ru','🇷🇺 Russe'],['ca','Catalan'],['tr','🇹🇷 Turc']];
+// prefix = préfixe d'ids (ex 'geo' -> geo-lang-main, geo-lang-fr...)
+function langSelectorHtml(prefix,withSecondary){
+const mainOpts=LANGS.map(([c,n])=>`<option value="${c}"${c==='fr'?' selected':''}>${n}</option>`).join('');
+let h=`<div><label>Langue principale</label><select id="${prefix}-lang-main" onchange="langSyncMain('${prefix}')">${mainOpts}</select></div>`;
+if(withSecondary){
+h+=`<div style="grid-column:1/-1"><label>Langues additionnelles <span style="font-weight:400;text-transform:none;letter-spacing:0">(1 jeu de pages + hreflang par langue)</span></label>
+<div class="wrap-btns" id="${prefix}-lang-extra">`+LANGS.map(([c,n])=>`<button type="button" class="btn2 region-btn ${prefix}-langbtn" data-lang="${c}" style="font-size:11px;padding:4px 10px" onclick="langToggle('${prefix}','${c}',this)">${n}</button>`).join('')+`</div></div>`;
+}
+return h;
+}
+function langSyncMain(prefix){
+// La langue principale ne peut pas être aussi "additionnelle" : on désactive son bouton
+const main=document.getElementById(prefix+'-lang-main').value;
+document.querySelectorAll('.'+prefix+'-langbtn').forEach(b=>{
+if(b.dataset.lang===main){b.classList.remove('on');b.style.opacity='.35';b.style.pointerEvents='none';b.title='Langue principale';}
+else{b.style.opacity='';b.style.pointerEvents='';b.title='';}
+});
+}
+function langToggle(prefix,code,el){el.classList.toggle('on');}
+// Retourne {main_language, languages:[toutes langues, principale incluse]}
+function langRead(prefix){
+const main=document.getElementById(prefix+'-lang-main').value;
+const extra=[...document.querySelectorAll('.'+prefix+'-langbtn.on')].map(b=>b.dataset.lang).filter(c=>c!==main);
+return {main_language:main, languages:[main,...extra]};
+}
 const deltaHtml=v=>{if(!v||v===0)return'';const p=v>0;return `<span class="${p?'up':'down'}">${p?'+':''}${Number(v).toFixed(1)}</span>`;};
 const pillHtml=(text,color)=>`<span class="pill" style="background:${color}20;color:${color}">${text}</span>`;
 
@@ -1381,6 +1408,7 @@ ${chevron}
 <div><label>Domaine</label><input id="g-domain" placeholder="monsite.fr"></div>
 <div><label>Titre du site</label><input id="g-title" placeholder="Mon Site"></div>
 </div>
+<div class="grid2 mb-12">`+langSelectorHtml('g',false)+`</div>
 <div class="grid2 mb-12">
 <div><label>Admin user</label><input id="g-admin-user" value="admin"></div>
 <div><label>Admin email</label><input id="g-admin-email" placeholder="admin@monsite.fr"></div>
@@ -1604,6 +1632,7 @@ et_username:document.getElementById('g-et-user').value.trim(),
 et_api_key:document.getElementById('g-et-key').value.trim(),
 generation_mode:genMode,
 site_prompt:document.getElementById('g-site-prompt').value.trim(),
+main_language:document.getElementById('g-lang-main').value,
 competitor_urls:compUrls,
 use_webarchive:document.getElementById('g-webarchive').checked,
 generate_images:document.getElementById('g-gen-images').checked,
@@ -1709,6 +1738,7 @@ h+=`<div ${stepStyle}>
 <label>Mot-cl\u00e9 template <span style="font-weight:400;text-transform:none;letter-spacing:0">(la ville sera ajout\u00e9e automatiquement)</span></label>
 <input id="geo-kw" placeholder="serrurier">
 </div>
+<div class="grid2 mb-16">`+langSelectorHtml('geo',true)+`</div>
 <div class="mb-16">
 <label>Texte source (HTML accept\u00e9)</label>
 <textarea id="geo-source-text" rows="5" placeholder="Collez ici le texte source (balises HTML accept\u00e9es : h2, h3, p, ul, li, strong, a...), ou laissez vide pour g\u00e9n\u00e9ration 100% IA \u00e0 partir du mot-cl\u00e9 et du brief..."></textarea>
@@ -1863,6 +1893,7 @@ if(napChk)napChk.addEventListener('change',()=>{document.getElementById('geo-nap
 // Recalcule le coût estimé quand une option influant sur le nombre d'appels IA change
 ['geo-ai-content','geo-variantes','geo-paa','geo-serp','geo-quality','geo-concurrence'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('change',geoEstimateCost);});
 geoEstimateCost();
+langSyncMain('geo');
 }
 
 function geoToggleStep(id,headerEl){
@@ -1950,6 +1981,7 @@ serp_gain:document.getElementById('geo-serp').checked,
 quality_check:document.getElementById('geo-quality').checked,
 real_reviews:document.getElementById('geo-realreviews').checked,
 business_info:{name:document.getElementById('geo-nap-name').value.trim(),phone:document.getElementById('geo-nap-phone').value.trim(),email:document.getElementById('geo-nap-email').value.trim(),address:document.getElementById('geo-nap-address').value.trim(),city:document.getElementById('geo-nap-city').value.trim(),postal_code:document.getElementById('geo-nap-postal').value.trim()},
+...langRead('geo'),
 video_url:document.getElementById('geo-video').value.trim(),
 nb_variants:Number(document.getElementById('geo-variantes').value)||1,
 source_text:document.getElementById('geo-source-text').value||'',
@@ -2282,6 +2314,9 @@ ${crCard('Quasi-doublons',s.duplicate_content,s.duplicate_content?'var(--danger)
 ${crCard('Pages ville',s.city_pages,'var(--accent)')}
 ${crCard('Ville absente Title',s.city_missing_in_title,s.city_missing_in_title?'var(--warn)':'var(--success)')}
 ${crCard('Orphelines',s.orphan_pages,s.orphan_pages?'var(--danger)':'var(--success)')}
+${s.is_multilingual?crCard('Langues',Object.keys(s.languages||{}).filter(l=>l!=='?').length,'var(--accent)'):''}
+${s.is_multilingual?crCard('Problèmes hreflang',s.hreflang_issues,s.hreflang_issues?'var(--danger)':'var(--success)'):''}
+${s.missing_html_lang?crCard('Sans attribut lang',s.missing_html_lang,'var(--warn)'):''}
 </div></div>`;
 // Barre d'actions + filtres
 h+=`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
@@ -2289,6 +2324,7 @@ h+=`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-ite
 <button class="btn2 btn-sm cr-tab" data-f="issues" onclick="crSetFilter('issues')">Avec problèmes (${s.pages_with_issues})</button>
 <button class="btn2 btn-sm cr-tab" data-f="errors" onclick="crSetFilter('errors')">Erreurs (${s.errors_4xx_5xx})</button>
 <button class="btn2 btn-sm cr-tab" data-f="city" onclick="crSetFilter('city')">Pages ville (${s.city_pages})</button>
+<button class="btn2 btn-sm cr-tab" data-f="i18n" onclick="crSetFilter('i18n')">Multilingue &amp; hreflang</button>
 <button class="btn2 btn-sm cr-tab" data-f="maillage" onclick="crSetFilter('maillage')">Maillage interne</button>
 <button class="btn" style="margin-left:auto;background:var(--success)" onclick="downloadAuth('/crawl/download/'+_crawlKey,'crawl.xlsx')">Exporter en Excel</button>
 </div><div id="cr-view"></div>`;
@@ -2303,9 +2339,10 @@ const r=_crawlReport;let pages=r.pages;
 if(f==='issues')pages=pages.filter(p=>p.issues&&p.issues.length);
 else if(f==='errors')pages=pages.filter(p=>p.status>=400);
 else if(f==='city')pages=pages.filter(p=>p.city);
+else if(f==='i18n')pages=pages.filter(p=>p.hreflang_issue||!p.html_lang||p.hreflang_count>0);
 let h=`<div class="card" style="padding:0;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
 <thead><tr style="background:var(--card2);text-align:left">
-<th style="padding:8px">URL</th><th style="padding:8px">Code</th><th style="padding:8px">Title</th><th style="padding:8px">H1</th><th style="padding:8px">Ville</th><th style="padding:8px" title="Liens entrants internes">Inlinks</th><th style="padding:8px">Mots</th><th style="padding:8px">Sim.</th><th style="padding:8px">Problèmes</th>
+<th style="padding:8px">URL</th><th style="padding:8px">Code</th><th style="padding:8px">Langue</th><th style="padding:8px" title="Versions hreflang">hreflang</th><th style="padding:8px">Title</th><th style="padding:8px">H1</th><th style="padding:8px">Ville</th><th style="padding:8px" title="Liens entrants internes">Inlinks</th><th style="padding:8px">Mots</th><th style="padding:8px">Sim.</th><th style="padding:8px">Problèmes</th>
 </tr></thead><tbody>`;
 pages.slice(0,500).forEach(p=>{
 const path=p.url.replace(/^https?:\/\/[^/]+/,'')||'/';
@@ -2314,6 +2351,8 @@ const simCol=p.max_similarity>=90?'var(--danger)':p.max_similarity>=70?'var(--wa
 h+=`<tr style="border-top:1px solid var(--border)">
 <td style="padding:7px 8px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(p.url)}">${esc(path)}</td>
 <td style="padding:7px 8px;font-weight:700;color:${stCol}">${p.status}</td>
+<td style="padding:7px 8px;text-align:center;color:${p.language?'var(--accent)':'var(--muted)'};font-weight:600">${esc((p.language||'—').toUpperCase())}</td>
+<td style="padding:7px 8px;text-align:center;font-family:var(--mono);color:${p.hreflang_count?'var(--success)':'var(--muted)'}">${p.hreflang_count||'—'}</td>
 <td style="padding:7px 8px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap${!p.title?';color:var(--danger)':''}" title="${esc(p.title||'')}">${esc(p.title||'(vide)')}</td>
 <td style="padding:7px 8px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap${!p.h1?';color:var(--danger)':''}" title="${esc(p.h1||'')}">${esc(p.h1||'(vide)')}</td>
 <td style="padding:7px 8px;color:${p.city?'var(--accent)':'var(--muted)'}">${esc(p.city||'—')}</td>

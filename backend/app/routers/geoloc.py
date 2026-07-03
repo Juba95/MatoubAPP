@@ -22,6 +22,7 @@ from app.services.geoloc_engine import (
     layout_seed_from,
     replace_ville,
 )
+from app.services import i18n
 
 logger = logging.getLogger(__name__)
 
@@ -660,6 +661,7 @@ def file_status(file_key: str):
         "steps": data.get("steps", []),
         "cost_eur": data.get("cost_eur"),
         "api_calls": data.get("api_calls"),
+        "languages": data.get("languages"),
     }
 
 
@@ -750,6 +752,8 @@ class FullPipelineRequest(BaseModel):
     quality_check: bool = False      # Agent juge qualité (Haiku) sur chaque variante
     real_reviews: bool = False       # Émettre l'AggregateRating (uniquement si vrais avis)
     business_info: dict = {}         # NAP réel : name/phone/email/address/city/postal_code/lat/lng
+    main_language: str = "fr"        # Langue principale (URLs sans préfixe)
+    languages: list[str] = []        # Langues additionnelles → 1 jeu de pages/langue + hreflang
 
 
 @router.post("/analyze-source")
@@ -865,10 +869,13 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
     if not villes:
         raise HTTPException(status_code=400, detail="Aucune ville ne correspond aux filtres")
 
-    file_key = f"adv_{req.site_domain}_{len(villes)}_{datetime.now().strftime('%H%M%S')}"
+    main_lang, all_langs = i18n.coerce_langs(req.main_language, req.languages)
+    total_rows = len(villes) * len(all_langs)
+
+    file_key = f"adv_{req.site_domain}_{total_rows}_{datetime.now().strftime('%H%M%S')}"
     _generated_files[file_key] = {
         "status": "running",
-        "total": len(villes),
+        "total": total_rows,
         "done": 0,
         "step": "init",
     }
@@ -884,6 +891,8 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
     if req.competitor_urls:
         step_defs.append(("competitors", "Analyse concurrentielle"))
     step_defs.append(("variants", "Génération des variantes"))
+    if len(all_langs) > 1:
+        step_defs.append(("translate", "Rédaction des versions linguistiques"))
     if req.quality_check:
         step_defs.append(("quality", "Contrôle qualité (juge IA)"))
     step_defs += [("assemble", "Assemblage des pages"), ("saving", "Sauvegarde du fichier")]
@@ -894,9 +903,16 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
     def run_pipeline():
         import openpyxl
 
-        engine = GeolocEngine()
+        engine = GeolocEngine(language=main_lang)
+        engines = [engine]   # un moteur par langue → coût cumulé
         state = _generated_files[file_key]
         steps = state["steps"]
+
+        def total_cost():
+            return round(sum(e.cost_eur for e in engines), 4)
+
+        def total_calls():
+            return sum(e.calls for e in engines)
 
         def set_step(key, status, message=""):
             for s in steps:
@@ -906,7 +922,7 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                         s["message"] = message
                     break
             state["step"] = key
-            state["cost_eur"] = engine.cost_eur
+            state["cost_eur"] = total_cost()
 
         try:
             # Texte source : si vide, on synthétise un brief pour la génération 100% IA
@@ -1018,6 +1034,43 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
             else:
                 set_step("variants", "ok", f"{len(variants)} variantes")
 
+            # --- Bundles de contenu par langue ---
+            def derive_templates(c: dict):
+                kw = c.get("keyword") or req.keyword_template or source_text[:30]
+                sb = slugify(c.get("slug_base") or kw)
+                tt = c.get("template_title") or f"{kw.title()} __VILLE__ | {req.site_name}"
+                ht = c.get("template_h1") or f"{kw.title()} __VILLE__"
+                mt = c.get("template_meta") or (
+                    f"{kw.capitalize()} à __VILLE__ ({{departement}}). Intervention rapide. Devis gratuit."
+                )
+                return {"keyword": kw, "slug_base": sb, "title_tpl": tt, "h1_tpl": ht, "meta_tpl": mt}
+
+            bundles: dict[str, dict] = {}
+            bundles[main_lang] = {"ctx": ctx, "anchors": anchors, "variants": variants,
+                                  "avis": avis, **derive_templates(ctx)}
+            metier_hint = ctx.get("contexte_metier", "")
+
+            # Langues additionnelles : un jeu de contenu rédigé dans chaque langue
+            extra_langs = [l for l in all_langs if l != main_lang]
+            if extra_langs:
+                set_step("translate", "running")
+                for L in extra_langs:
+                    engL = GeolocEngine(language=L)
+                    engines.append(engL)
+                    ctxL = engL.analyze_source(source_text, brief)
+                    if metier_hint and metier_hint not in ctxL.get("contexte_metier", ""):
+                        ctxL["contexte_metier"] = (ctxL.get("contexte_metier", "") + " " + metier_hint).strip()
+                    anchorsL = engL.generate_anchors(ctxL)
+                    blocsL = engL.optimize_blocks(source_text, ctxL, anchorsL, paa_questions=[])
+                    avisL = blocsL.pop("BLOC_AVIS", [])
+                    if not isinstance(avisL, list):
+                        avisL = []
+                    variantsL = engL.generate_variants(blocsL, ctxL, req.nb_variants) or [blocsL]
+                    bundles[L] = {"ctx": ctxL, "anchors": anchorsL, "variants": variantsL,
+                                  "avis": avisL, **derive_templates(ctxL)}
+                set_step("translate", "ok",
+                         f"{len(extra_langs)} langue(s) : {', '.join(extra_langs)}")
+
             # --- Step 6+7: Assemble pages & build Excel ---
             set_step("assemble", "running")
             wb = openpyxl.Workbook()
@@ -1112,137 +1165,173 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                 except Exception as exc:
                     set_step("quality", "skipped", f"Contrôle impossible ({exc})")
 
-            for i, v in enumerate(villes):
-                # Rotate variants
-                variant = variants[i % len(variants)]
-                is_dept = v.get("type") == "Département"
+            base_url = req.site_domain.replace("https://", "").replace("http://", "").rstrip("/")
+            done_count = 0
 
-                # Maillage interne : liens vers les 8 villes les plus proches
-                maillage = engine.generate_maillage(
-                    ville=v["name"],
-                    all_villes=villes_engine,
-                    slug_base=slug_base,
-                    anchors=anchors,
-                    nb=8,
-                )
+            def _page_slug_core(lang_bundle, ville_slug):
+                return f"{lang_bundle['slug_base']}-{ville_slug}"
 
-                # Métadonnées d'abord (le H1 est intégré en tête de contenu)
-                replacements_pre = {"__VILLE__": v["name"], "{ville}": v["name"]}
-                h1_page = h1_tpl
-                for ph, val in replacements_pre.items():
-                    h1_page = h1_page.replace(ph, val)
+            for lang in all_langs:
+                b = bundles[lang]
+                ctx = b["ctx"]; anchors = b["anchors"]; variants = b["variants"]; avis = b["avis"]
+                keyword = b["keyword"]; slug_base = b["slug_base"]
+                title_tpl = b["title_tpl"]; h1_tpl = b["h1_tpl"]; meta_tpl = b["meta_tpl"]
+                prefix = i18n.lang_prefix(lang, main_lang)        # '' ou '/en'
+                slug_prefix = "" if lang == main_lang else f"{lang}/"
+                lang_engine = engines[all_langs.index(lang)]
 
-                # Bloc de contexte local réel (communes voisines + distances) —
-                # données factuelles uniques par ville, cœur de la valeur locale.
-                extra_html = ""
-                dept_name = DEPT_NAMES.get(v["department"], v["department"])
-                dept_slug = f"{slug_base}-{slugify(dept_name)}"
-                if req.local_data and not is_dept:
-                    extra_html += engine.local_context_block(
-                        villes_engine[i], villes_engine, ctx,
-                        postal_code=v.get("postal_code", ""),
-                        department=v["department"], region=v.get("region", ""),
-                        department_name=dept_name,
+                for i, v in enumerate(villes):
+                    # Rotate variants
+                    variant = variants[i % len(variants)]
+                    is_dept = v.get("type") == "Département"
+
+                    # Maillage interne : liens vers les 8 villes les plus proches
+                    maillage = lang_engine.generate_maillage(
+                        ville=v["name"],
+                        all_villes=villes_engine,
+                        slug_base=slug_base,
+                        anchors=anchors,
+                        nb=8,
                     )
 
-                # Pages hub (département) : annuaire de toutes leurs communes.
-                # Pages villes : lien remontant vers leur page département.
-                if is_dept:
-                    dept_cities = cities_by_dept.get(v["department"], [])
-                    if dept_cities:
-                        links = "".join(
-                            f'<li><a href="/{slug_base}-{c["slug"]}/">'
-                            f'{ctx.get("keyword", "").capitalize()} {c["name"]}</a></li>'
-                            for c in dept_cities
+                    # Métadonnées d'abord (le H1 est intégré en tête de contenu)
+                    replacements_pre = {"__VILLE__": v["name"], "{ville}": v["name"]}
+                    h1_page = h1_tpl
+                    for ph, val in replacements_pre.items():
+                        h1_page = h1_page.replace(ph, val)
+
+                    # Bloc de contexte local réel (communes voisines + distances) —
+                    # données factuelles uniques par ville, cœur de la valeur locale.
+                    extra_html = ""
+                    dept_name = DEPT_NAMES.get(v["department"], v["department"])
+                    dept_slug = f"{slug_base}-{slugify(dept_name)}"
+                    if req.local_data and not is_dept:
+                        extra_html += lang_engine.local_context_block(
+                            villes_engine[i], villes_engine, ctx,
+                            postal_code=v.get("postal_code", ""),
+                            department=v["department"], region=v.get("region", ""),
+                            department_name=dept_name,
                         )
+
+                    # Pages hub (département) : annuaire de toutes leurs communes.
+                    # Pages villes : lien remontant vers leur page département.
+                    if is_dept:
+                        dept_cities = cities_by_dept.get(v["department"], [])
+                        if dept_cities:
+                            links = "".join(
+                                f'<li><a href="/{slug_base}-{c["slug"]}/">'
+                                f'{keyword.capitalize()} {c["name"]}</a></li>'
+                                for c in dept_cities
+                            )
+                            extra_html += (
+                                f"<h2>Nos interventions dans les communes de {v['name']}</h2>"
+                                f'<ul class="annuaire-communes" style="columns:3;column-gap:24px">{links}</ul>'
+                            )
+                    elif req.include_departments:
                         extra_html += (
-                            f"<h2>Nos interventions dans les communes de {v['name']}</h2>"
-                            f'<ul class="annuaire-communes" style="columns:3;column-gap:24px">{links}</ul>'
+                            f"<p>Découvrez aussi notre page départementale : "
+                            f'<a href="/{dept_slug}/">{keyword.capitalize()} {dept_name}</a></p>'
                         )
-                elif req.include_departments:
-                    extra_html += (
-                        f"<p>Découvrez aussi notre page départementale : "
-                        f'<a href="/{dept_slug}/">{ctx.get("keyword", "").capitalize()} {dept_name}</a></p>'
+
+                    # hreflang : lie les versions linguistiques de CETTE ville
+                    hreflang_tags = ""
+                    if len(all_langs) > 1:
+                        urls_by_lang = {}
+                        for L in all_langs:
+                            pfx = i18n.lang_prefix(L, main_lang)
+                            core = _page_slug_core(bundles[L], v["slug"])
+                            urls_by_lang[L] = f"https://{base_url}{pfx}/{core}/"
+                        hreflang_tags = i18n.build_hreflang_tags(
+                            urls_by_lang, x_default=urls_by_lang[main_lang])
+
+                    # Schema.org JSON-LD (LocalBusiness+Rating, FAQPage, Breadcrumb)
+                    jsonld = ""
+                    if req.schema_org or hreflang_tags:
+                        faq_pairs = parse_faq(replace_ville(str(variant.get("BLOC_FAQ", "")), v["name"])) if req.schema_org else []
+                        breadcrumb = None
+                        if req.schema_org:
+                            breadcrumb = [("Accueil", f"{prefix}/")]
+                            if req.include_departments and not is_dept:
+                                breadcrumb.append((dept_name, f"{prefix}/{dept_slug}/"))
+                            breadcrumb.append((v["name"], f"{prefix}/{slug_base}-{v['slug']}/"))
+                        jsonld = build_jsonld(
+                            site_name=req.site_name,
+                            site_domain=req.site_domain,
+                            keyword=keyword,
+                            ville={**villes_engine[i], "postal_code": v.get("postal_code", ""),
+                                   "type": v.get("type", "Ville")},
+                            faq_pairs=faq_pairs,
+                            avis=lang_engine.render_avis(avis, start=i, count=6) if req.schema_org else None,
+                            breadcrumb=breadcrumb,
+                            real_reviews=req.real_reviews,
+                            business_info=req.business_info,
+                            language=lang,
+                            hreflang_tags=hreflang_tags,
+                        )
+
+                    # Assemble content
+                    content = lang_engine.assemble_page(
+                        blocs=variant,
+                        ville=villes_engine[i],
+                        ctx=ctx,
+                        maillage=maillage,
+                        variant_idx=i,
+                        use_divi=req.use_divi,
+                        images=req.images,
+                        colors=req.colors,
+                        h1=h1_page,
+                        video_url=req.video_url,
+                        avis=avis,
+                        layout_seed=layout_seed,
+                        jsonld=jsonld,
+                        extra_html=extra_html,
                     )
+                    # Préfixe les liens internes racine pour les langues secondaires
+                    if prefix:
+                        content = content.replace('href="/', f'href="{prefix}/')
+                    if lang == main_lang:
+                        uniq.add(i % len(variants), content)
 
-                # Schema.org JSON-LD (LocalBusiness+Rating, FAQPage, Breadcrumb)
-                jsonld = ""
-                if req.schema_org:
-                    faq_pairs = parse_faq(replace_ville(str(variant.get("BLOC_FAQ", "")), v["name"]))
-                    breadcrumb = [("Accueil", "/")]
-                    if req.include_departments and not is_dept:
-                        breadcrumb.append((dept_name, f"/{dept_slug}/"))
-                    breadcrumb.append((v["name"], f"/{slug_base}-{v['slug']}/"))
-                    jsonld = build_jsonld(
-                        site_name=req.site_name,
-                        site_domain=req.site_domain,
-                        keyword=ctx.get("keyword", ""),
-                        ville={**villes_engine[i], "postal_code": v.get("postal_code", ""),
-                               "type": v.get("type", "Ville")},
-                        faq_pairs=faq_pairs,
-                        avis=engine.render_avis(avis, start=i, count=6),
-                        breadcrumb=breadcrumb,
-                        real_reviews=req.real_reviews,
-                        business_info=req.business_info,
-                    )
+                    # Build metadata — supporte __VILLE__ (moteur) et {ville} (legacy)
+                    replacements = {
+                        "__VILLE__": v["name"],
+                        "{ville}": v["name"],
+                        "{departement}": v["department"],
+                        "{region}": v.get("region", ""),
+                        "{code_postal}": v.get("postal_code", ""),
+                    }
 
-                # Assemble content
-                content = engine.assemble_page(
-                    blocs=variant,
-                    ville=villes_engine[i],
-                    ctx=ctx,
-                    maillage=maillage,
-                    variant_idx=i,
-                    use_divi=req.use_divi,
-                    images=req.images,
-                    colors=req.colors,
-                    h1=h1_page,
-                    video_url=req.video_url,
-                    avis=avis,
-                    layout_seed=layout_seed,
-                    jsonld=jsonld,
-                    extra_html=extra_html,
-                )
-                uniq.add(i % len(variants), content)
+                    def _replace(tpl: str) -> str:
+                        for ph, val in replacements.items():
+                            tpl = tpl.replace(ph, val)
+                        return tpl
 
-                # Build metadata — supporte __VILLE__ (moteur) et {ville} (legacy)
-                replacements = {
-                    "__VILLE__": v["name"],
-                    "{ville}": v["name"],
-                    "{departement}": v["department"],
-                    "{region}": v.get("region", ""),
-                    "{code_postal}": v.get("postal_code", ""),
-                }
+                    title = _replace(title_tpl)
+                    h1 = _replace(h1_tpl)
+                    meta_desc = _replace(meta_tpl)
+                    slug = f"{slug_prefix}{slug_base}-{v['slug']}"
+                    tags = f"{keyword},{v['name'].lower()},{v['department']}"
+                    # Dates étalées (+1 jour par ville) — même date entre langues d'une ville
+                    today = (base_date + timedelta(days=i)).strftime("%Y-%m-%d")
 
-                def _replace(tpl: str) -> str:
-                    for ph, val in replacements.items():
-                        tpl = tpl.replace(ph, val)
-                    return tpl
+                    row = [
+                        v["name"], slug, title, h1, meta_desc,
+                        safe_cell(content), req.post_thumbnail, today, req.post_author,
+                        req.post_category, tags, req.post_status,
+                        v["population"], v.get("type", "Ville"),
+                    ] + [title, meta_desc, keyword if is_dept else f"{keyword} {v['name']}"]
+                    if req.use_divi:
+                        row.extend(["on", ""])
 
-                title = _replace(title_tpl)
-                h1 = _replace(h1_tpl)
-                meta_desc = _replace(meta_tpl)
-                slug = f"{slug_base}-{v['slug']}"
-                tags = f"{keyword},{v['name'].lower()},{v['department']}"
-                # Dates étalées (+1 jour par ville) pour éviter un footprint de publication massive
-                today = (base_date + timedelta(days=i)).strftime("%Y-%m-%d")
+                    url_entries.append({"loc": f"https://{base_url}{prefix}/{slug_base}-{v['slug']}/",
+                                        "lastmod": today, "dept": v["department"]})
 
-                row = [
-                    v["name"], slug, title, h1, meta_desc,
-                    safe_cell(content), req.post_thumbnail, today, req.post_author,
-                    req.post_category, tags, req.post_status,
-                    v["population"], v.get("type", "Ville"),
-                ] + [title, meta_desc, keyword if is_dept else f"{keyword} {v['name']}"]
-                if req.use_divi:
-                    row.extend(["on", ""])
+                    ws.append(row)
+                    done_count += 1
+                    state["done"] = done_count
 
-                base_url = req.site_domain.replace("https://", "").replace("http://", "").rstrip("/")
-                url_entries.append({"loc": f"https://{base_url}/{slug}/", "lastmod": today, "dept": v["department"]})
-
-                ws.append(row)
-                state["done"] = i + 1
-
-            set_step("assemble", "ok", f"{len(villes)} pages")
+            set_step("assemble", "ok", f"{total_rows} pages"
+                     + (f" ({len(all_langs)} langues)" if len(all_langs) > 1 else ""))
 
             # --- Step 8: Save to cache ---
             set_step("saving", "running")
@@ -1250,16 +1339,17 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
             wb.save(buffer)
             buffer.seek(0)
             sitemaps_zip = build_sitemaps_zip(req.site_domain, url_entries) if req.generate_sitemaps else None
-            set_step("saving", "ok", f"{len(villes)} pages — coût {engine.cost_eur:.2f} €")
+            set_step("saving", "ok", f"{total_rows} pages — coût {total_cost():.2f} €")
 
             _generated_files[file_key] = {
                 "status": "done",
-                "total": len(villes),
-                "done": len(villes),
+                "total": total_rows,
+                "done": total_rows,
                 "step": "done",
                 "steps": steps,
-                "cost_eur": engine.cost_eur,
-                "api_calls": engine.calls,
+                "languages": all_langs,
+                "cost_eur": total_cost(),
+                "api_calls": total_calls(),
                 "data": buffer.getvalue(),
                 "filename": f"adv_import_{req.site_domain}_{len(villes)}_pages.xlsx",
                 "ctx": ctx,
@@ -1282,13 +1372,14 @@ def build_file(req: FullPipelineRequest, background_tasks: BackgroundTasks):
                 "done": state.get("done", 0),
                 "step": state.get("step", "unknown"),
                 "steps": steps,
-                "cost_eur": engine.cost_eur,
+                "cost_eur": total_cost(),
                 "error": str(exc),
             })
 
     background_tasks.add_task(run_pipeline)
+    lang_note = f" — {len(all_langs)} langues" if len(all_langs) > 1 else ""
     return {
-        "message": f"Pipeline avancé lancé ({len(villes)} villes)",
+        "message": f"Pipeline avancé lancé ({len(villes)} villes{lang_note})",
         "file_key": file_key,
-        "total": len(villes),
+        "total": total_rows,
     }

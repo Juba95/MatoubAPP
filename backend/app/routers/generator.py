@@ -51,6 +51,8 @@ class FullInstallRequest(BaseModel):
     # Content generation
     generation_mode: str = "manuel"  # "manuel" | "concurrent"
     site_prompt: str = ""
+    # Langue principale du site généré (thème, contenu, WPLANG, hreflang)
+    main_language: str = "fr"
     competitor_urls: list[str] = []
     # Web Archive
     use_webarchive: bool = False
@@ -225,6 +227,7 @@ def full_install(
         "generate_images": req.generate_images,
         "image_count": req.image_count,
         "image_provider": "openai",
+        "main_language": req.main_language,
         "competitor_urls": req.competitor_urls if req.generation_mode == "concurrent" else [],
         "eat": {
             "enabled": req.eat_enabled,

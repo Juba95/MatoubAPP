@@ -57,12 +57,15 @@ class WPInstaller:
         conn.close()
         self.log("Reset complet.")
 
-    def install_wordpress(self, admin_password: str | None = None) -> dict:
+    def install_wordpress(self, admin_password: str | None = None,
+                          locale: str = "fr_FR") -> dict:
         """Télécharge et installe WordPress.
 
         Si *admin_password* est fourni, il est utilisé pour le compte admin ;
-        sinon un mot de passe aléatoire est généré.
+        sinon un mot de passe aléatoire est généré. *locale* définit la langue
+        du site (WPLANG dans wp-config).
         """
+        self._locale = locale
         self.log("Téléchargement de WordPress...")
         resp = httpx.get(self.WP_DOWNLOAD_URL, follow_redirects=True, timeout=60)
         resp.raise_for_status()
@@ -136,6 +139,7 @@ $table_prefix = 'wp_';
 define('WP_DEBUG', false);
 define('DISALLOW_FILE_EDIT', true);
 define('WP_AUTO_UPDATE_CORE', false);
+define('WPLANG', '{getattr(self, "_locale", "fr_FR")}');
 
 if ( ! defined( 'ABSPATH' ) ) {{
     define( 'ABSPATH', __DIR__ . '/' );

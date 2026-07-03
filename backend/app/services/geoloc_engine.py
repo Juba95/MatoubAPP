@@ -89,10 +89,14 @@ def build_jsonld(
     breadcrumb: list[tuple[str, str]] | None = None,
     real_reviews: bool = False,
     business_info: dict | None = None,
+    language: str = "fr",
+    hreflang_tags: str = "",
 ) -> str:
     """Construit les blocs Schema.org JSON-LD d'une page géolocalisée.
 
-    Génère LocalBusiness, FAQPage et BreadcrumbList.
+    Génère LocalBusiness, FAQPage et BreadcrumbList. *language* renseigne
+    ``inLanguage`` (signal SEO), *hreflang_tags* (balises <link alternate>)
+    est ajouté en tête pour les pages multilingues.
 
     SÉCURITÉ : l'AggregateRating (étoiles) n'est émis QUE si *real_reviews*
     est True. Émettre un balisage d'avis inventé est contraire aux règles de
@@ -104,11 +108,13 @@ def build_jsonld(
     info = business_info or {}
     schemas = []
 
+    from app.services.i18n import hreflang as _hl
     business: dict = {
         "@context": "https://schema.org",
         "@type": "LocalBusiness",
         "name": info.get("name") or site_name,
         "url": base,
+        "inLanguage": _hl(language),
         "description": f"{keyword.capitalize()} à {ville.get('nom', '')}",
         "areaServed": {
             "@type": "City" if ville.get("type") != "Département" else "AdministrativeArea",
@@ -188,12 +194,14 @@ def build_jsonld(
             ],
         })
 
-    return "\n".join(
+    jsonld = "\n".join(
         '<script type="application/ld+json">'
         + json.dumps(s, ensure_ascii=False)
         + "</script>"
         for s in schemas
     )
+    # Les balises hreflang (versions linguistiques) précèdent le JSON-LD.
+    return (hreflang_tags + "\n" + jsonld) if hreflang_tags else jsonld
 
 
 def layout_seed_from(domain: str) -> int:
@@ -262,14 +270,23 @@ class GeolocEngine:
     # ces attributs meme si __init__ est contourne (tests, sous-classes).
     cost_usd = 0.0
     calls = 0
+    language = "fr"
 
-    def __init__(self, model: Optional[str] = None):
+    def __init__(self, model: Optional[str] = None, language: str = "fr"):
+        from app.services.i18n import normalize
         settings = get_settings()
         self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
         self.model = model or self.DEFAULT_MODEL
+        self.language = normalize(language)
         # Suivi du cout reel cumule sur toute la generation
         self.cost_usd = 0.0
         self.calls = 0
+
+    @property
+    def _lang_instr(self) -> str:
+        """Instruction de langue de rédaction ('' pour le français)."""
+        from app.services.i18n import prompt_language_instruction
+        return prompt_language_instruction(getattr(self, "language", "fr"))
 
     @property
     def cost_eur(self) -> float:
@@ -386,7 +403,7 @@ TEXTE SOURCE :
 
 Reponds uniquement avec le JSON, sans commentaire."""
 
-        return self._call_claude_json(system, user_prompt)
+        return self._call_claude_json(system, user_prompt + self._lang_instr)
 
     # ------------------------------------------------------------------
     # 2. Generation des ancres de maillage interne
@@ -413,7 +430,7 @@ Services cles : {", ".join(ctx.get("services_cles", []))}
 
 Reponds avec un tableau JSON de 6 strings, rien d'autre."""
 
-        raw = self._call_claude_json(system, user_prompt)
+        raw = self._call_claude_json(system, user_prompt + self._lang_instr)
         if isinstance(raw, list):
             return raw
         # Claude peut renvoyer un dict contenant une liste
@@ -495,7 +512,7 @@ CONSIGNES :
 
 Reponds uniquement avec le JSON."""
 
-        return self._call_claude_json(system, user_prompt, max_tokens=8192)
+        return self._call_claude_json(system, user_prompt + self._lang_instr, max_tokens=8192)
 
     # ------------------------------------------------------------------
     # 4. Generation de variantes de contenu
@@ -539,7 +556,7 @@ CONSIGNES :
 Reponds uniquement avec le JSON."""
 
             try:
-                variant = self._call_claude_json(system, user_prompt, max_tokens=8192)
+                variant = self._call_claude_json(system, user_prompt + self._lang_instr, max_tokens=8192)
                 variants.append(variant)
             except (ValueError, RuntimeError) as exc:
                 logger.error("Erreur generation variante %d : %s", i + 1, exc)

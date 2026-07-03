@@ -1049,6 +1049,22 @@ class EATGenerator:
 #  THEME GENERATOR — Claude
 # ═════════════════════════════════════════════════════════════════
 
+def _theme_lang_instruction(language: str) -> str:
+    """Force la langue de rédaction du thème (le prompt système est en français
+    par défaut). Vide pour le français."""
+    from app.services.i18n import normalize, lang_name
+    code = normalize(language)
+    if code == "fr":
+        return ""
+    name = lang_name(code, "en")
+    native = lang_name(code, "native")
+    return (
+        f"\n\nLANGUAGE OVERRIDE: Ignore the French default. Write ALL visible text "
+        f"(pages, menus, footer, buttons, forms, meta) in {name} ({native}), "
+        f"naturally and idiomatically. Set the HTML lang attribute to '{code}'."
+    )
+
+
 class ThemeGenerator:
     """
     Genere un theme WordPress (custom PHP ou Divi Builder) via Claude.
@@ -1064,6 +1080,7 @@ class ThemeGenerator:
         image_urls: dict | None = None,
         logo_url: str | None = None,
         eat_context: str | None = None,
+        language: str = "fr",
     ) -> dict:
         """Genere un theme PHP custom complet. Retourne le dict JSON."""
         logger.info("Generation du theme custom avec Claude")
@@ -1131,6 +1148,7 @@ RULES:
             )
         if eat_context:
             full_prompt += eat_context
+        full_prompt += _theme_lang_instruction(language)
 
         raw = self._call(system, full_prompt, max_tokens=12000)
         data = json.loads(raw)
@@ -1149,6 +1167,7 @@ RULES:
         image_urls: dict | None = None,
         logo_url: str | None = None,
         eat_context: str | None = None,
+        language: str = "fr",
     ) -> dict:
         """Genere des layouts Divi Builder. Retourne le dict JSON."""
         logger.info("Generation du layout Divi Builder avec Claude")
@@ -1226,6 +1245,7 @@ DIVI SHORTCODE RULES:
             )
         if eat_context:
             full_prompt += eat_context
+        full_prompt += _theme_lang_instruction(language)
 
         raw = self._call(system, full_prompt, max_tokens=12000)
         data = json.loads(raw)
@@ -2533,8 +2553,10 @@ class WPGeneratorPipeline:
                 installer = WPInstaller(
                     site, log_callback=lambda m: self._log(m, log_callback),
                 )
+                from app.services.i18n import locale as _locale
                 wp_result = installer.install_wordpress(
                     admin_password=config.get("admin_pass") or None,
+                    locale=_locale(config.get("main_language", "fr")),
                 )
                 result["wordpress"] = wp_result
                 result["steps_completed"].append("install_wp")
@@ -2683,6 +2705,7 @@ class WPGeneratorPipeline:
         try:
             generator = ThemeGenerator(claude_client)
             site_prompt = competitor_brief or config.get("site_prompt", "")
+            site_lang = config.get("main_language", "fr")
 
             if mode == "divi":
                 theme_data = generator.generate_divi(
@@ -2691,6 +2714,7 @@ class WPGeneratorPipeline:
                     image_urls=image_urls,
                     logo_url=logo_url,
                     eat_context=eat_context,
+                    language=site_lang,
                 )
             else:
                 theme_data = generator.generate_custom(
@@ -2699,6 +2723,7 @@ class WPGeneratorPipeline:
                     image_urls=image_urls,
                     logo_url=logo_url,
                     eat_context=eat_context,
+                    language=site_lang,
                 )
 
             if logo_url and theme_data:
