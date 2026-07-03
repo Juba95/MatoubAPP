@@ -1388,6 +1388,93 @@ setPdf('✓ Rapport ouvert dans un nouvel onglet — utilisez « Imprimer / Enre
 // GENERATOR
 let _genPollInterval=null;
 
+// --- Palette dérivée d'une couleur (port JS de app/services/colors.py) ---
+function _hexToHls(hex){hex=(hex||'').replace('#','');if(hex.length===3)hex=hex.split('').map(c=>c+c).join('');if(!/^[0-9a-fA-F]{6}$/.test(hex))return null;let r=parseInt(hex.slice(0,2),16)/255,g=parseInt(hex.slice(2,4),16)/255,b=parseInt(hex.slice(4,6),16)/255;let mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2,h=0,s=0;if(mx!==mn){const d=mx-mn;s=l>0.5?d/(2-mx-mn):d/(mx+mn);if(mx===r)h=(g-b)/d+(g<b?6:0);else if(mx===g)h=(b-r)/d+2;else h=(r-g)/d+4;h/=6;}return[h,l,s];}
+function _hlsToHex(h,l,s){h=((h%1)+1)%1;l=Math.max(0,Math.min(1,l));s=Math.max(0,Math.min(1,s));let r,g,b;if(s===0){r=g=b=l;}else{const q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q;const hue=(t)=>{t=((t%1)+1)%1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;};r=hue(h+1/3);g=hue(h);b=hue(h-1/3);}const to=(v)=>('0'+Math.round(v*255).toString(16)).slice(-2);return'#'+to(r)+to(g)+to(b);}
+function _lum(hex){hex=hex.replace('#','');const f=(v)=>{v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4);};return 0.2126*f(parseInt(hex.slice(0,2),16))+0.7152*f(parseInt(hex.slice(2,4),16))+0.0722*f(parseInt(hex.slice(4,6),16));}
+function _contrast(a,b){const l1=_lum(a),l2=_lum(b),hi=Math.max(l1,l2),lo=Math.min(l1,l2);return(hi+0.05)/(lo+0.05);}
+function _textOn(bg){return _contrast(bg,'#ffffff')>=_contrast(bg,'#1a1a2e')?'#ffffff':'#1a1a2e';}
+function buildPaletteJS(primary){const hls=_hexToHls(primary);if(!hls)return null;const[h,l,s]=hls;const prim=_hlsToHex(h,l,s);const secondary=_hlsToHex(h+30/360,Math.min(0.62,l+0.08),Math.max(0.35,s*0.9));const light=_hlsToHex(h,0.96,Math.min(0.30,s));const neutre=_hlsToHex(h,0.13,Math.min(0.25,s*0.5));const ctaH=s>0.25?h+0.5:h+1/3;const cta=_hlsToHex(ctaH,0.52,Math.max(0.6,s));return{primary:prim,secondary,light,neutre,cta,text_on_primary:_textOn(prim),text_on_cta:_textOn(cta)};}
+function gPalettePreview(){const el=document.getElementById('g-palette-preview');if(!el)return;const val=(document.getElementById('g-primary-color').value||'').trim();if(!val){el.innerHTML='<span style="font-size:11px;color:var(--muted)">Palette par défaut du thème</span>';return;}const p=buildPaletteJS(val);if(!p){el.innerHTML='<span style="font-size:11px;color:var(--danger)">Couleur invalide (ex #1e6fd9)</span>';return;}const sw=(c,lbl)=>`<div style="text-align:center"><div style="width:34px;height:34px;border-radius:6px;background:${c};border:1px solid var(--border)" title="${lbl} ${c}"></div><div style="font-size:9px;color:var(--muted);margin-top:2px">${lbl}</div></div>`;el.innerHTML=sw(p.primary,'Principale')+sw(p.secondary,'Second.')+sw(p.cta,'CTA')+sw(p.light,'Clair')+sw(p.neutre,'Neutre');}
+
+// --- Étapes du pipeline d'installation : explication + gain SEO ---
+const GEN_STEPS=[
+{key:'init',label:'Initialisation',explain:'Préparation du pipeline et vérification des accès (FTP, base de données, API).',gain:'Évite les échecs à mi-parcours en validant tout en amont.'},
+{key:'ftp_upload',label:'Upload FTP',explain:'Transfert des fichiers WordPress sur votre hébergement.',gain:'Base propre et à jour, sans résidus d\'une ancienne install.'},
+{key:'database',label:'Base de données',explain:'Création et configuration de la base MySQL du site.',gain:'Fondation stable pour contenus, réglages et SEO.'},
+{key:'wp_install',label:'Installation WordPress',explain:'Installation du cœur WordPress, langue du site et compte admin.',gain:'CMS prêt, dans la bonne langue (WPLANG) pour un SEO local correct.'},
+{key:'logo',label:'Logo',explain:'Génération IA ou reprise du logo, puis recadrage header / retina / favicon.',gain:'Image de marque cohérente + favicon = confiance et branding dans les SERP.'},
+{key:'theme',label:'Thème',explain:'Installation du thème (Divi ou custom), application de votre palette de couleurs.',gain:'Design pro et rapide + palette accessible (contrastes) = meilleure UX, signal qualité Google.'},
+{key:'content',label:'Génération de contenu',explain:'Rédaction IA des pages (Claude) : structure SEO, variantes anti-duplicate, maillage interne.',gain:'Contenu unique et structuré = le facteur nº1 pour ranker durablement.'},
+{key:'eat',label:'Blocs E-E-A-T',explain:'Ajout des signaux de confiance : NAP, FAQ, avis, horaires, carte, réassurance, Schema.org.',gain:'E-E-A-T = crédibilité Google, éligibilité aux rich results, meilleur taux de clic.'},
+{key:'done',label:'Terminé',explain:'Site généré et publié.',gain:'Prêt à être indexé — passez au module Indexation.'},
+];
+function genRenderStepper(current,error){
+const idx=GEN_STEPS.findIndex(s=>s.key===current);
+const curIdx=idx<0?0:idx;
+const pct=current==='done'?100:Math.round(curIdx/(GEN_STEPS.length-1)*100);
+const bar=document.getElementById('gen-progress-bar'),pctEl=document.getElementById('gen-progress-pct'),stepEl=document.getElementById('gen-progress-step');
+if(bar)bar.style.width=pct+'%';
+if(bar&&error)bar.style.background='var(--danger)';
+if(pctEl)pctEl.textContent=pct+'%';
+const cur=GEN_STEPS[curIdx];
+if(stepEl)stepEl.textContent=`Étape ${curIdx+1}/${GEN_STEPS.length} — ${cur.label}`;
+// Fil des pastilles
+let sh='<div style="display:flex;gap:4px;flex-wrap:wrap">';
+GEN_STEPS.forEach((s,i)=>{
+const done=i<curIdx||current==='done';const active=i===curIdx&&current!=='done';
+const col=error&&active?'var(--danger)':done?'var(--success)':active?'var(--accent)':'var(--card2)';
+const txt=done||active?'#fff':'var(--muted)';
+sh+=`<div title="${s.label}" style="flex:1;min-width:26px;height:24px;border-radius:5px;background:${col};color:${txt};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700">${done&&!active?'✓':i+1}</div>`;
+});
+sh+='</div>';
+const stEl=document.getElementById('gen-stepper');if(stEl)stEl.innerHTML=sh;
+const exEl=document.getElementById('gen-step-explain');
+if(exEl)exEl.innerHTML=`<div style="color:var(--text)">${esc(cur.explain)}</div><div style="color:var(--success);margin-top:3px">✔ Gain : ${esc(cur.gain)}</div>`;
+}
+
+let _genPreviewDevice='desktop';
+async function genPreview(){
+const btn=document.getElementById('gen-preview-btn');
+const wrap=document.getElementById('gen-preview-wrap');
+const body={
+site_title:document.getElementById('g-title').value.trim()||'Mon Site',
+site_prompt:document.getElementById('g-site-prompt').value.trim(),
+main_language:document.getElementById('g-lang-main').value,
+primary_color:(document.getElementById('g-primary-color').value||'').trim(),
+business_name:document.getElementById('g-biz-name').value.trim(),
+business_address:document.getElementById('g-biz-address').value.trim(),
+business_phone:document.getElementById('g-biz-phone').value.trim(),
+business_email:document.getElementById('g-biz-email').value.trim(),
+};
+btn.disabled=true;const old=btn.textContent;btn.textContent='Génération de l\'aperçu...';
+wrap.innerHTML=`<div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:12px;color:var(--muted);font-size:13px"><div style="width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite"></div>Génération de la maquette (~15-25 s)...</div>`;
+let d;
+try{d=await apiFetch('/generator/preview',{method:'POST',body:JSON.stringify(body)});}
+catch(e){wrap.innerHTML=`<div class="card" style="color:var(--danger);margin-bottom:14px">Erreur d'aperçu : ${esc(e.message)}</div>`;btn.disabled=false;btn.textContent=old;return;}
+btn.disabled=false;btn.textContent=old;
+_genPreviewHtml=d.html;
+genRenderPreview();
+}
+let _genPreviewHtml='';
+function genSetDevice(dev){_genPreviewDevice=dev;genRenderPreview();}
+function genRenderPreview(){
+const wrap=document.getElementById('gen-preview-wrap');
+if(!_genPreviewHtml)return;
+const w=_genPreviewDevice==='mobile'?390:_genPreviewDevice==='tablet'?768:'100%';
+const mx=_genPreviewDevice==='desktop'?'100%':w+'px';
+const dbtn=(dev,lbl)=>`<button class="btn2 btn-sm" style="${_genPreviewDevice===dev?'background:var(--accent);color:#fff':''}" onclick="genSetDevice('${dev}')">${lbl}</button>`;
+const blob=`data:text/html;charset=utf-8,${encodeURIComponent(_genPreviewHtml)}`;
+wrap.innerHTML=`<div class="card" style="margin-bottom:14px;padding:12px">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+<div style="display:flex;gap:6px;align-items:center"><span style="font-size:12px;font-weight:600;color:var(--text)">Aperçu</span>${dbtn('desktop','Desktop')}${dbtn('tablet','Tablette')}${dbtn('mobile','Mobile')}</div>
+<div style="display:flex;gap:6px"><a class="btn2 btn-sm" href="${blob}" target="_blank" rel="noopener">Ouvrir dans un onglet</a><button class="btn2 btn-sm" onclick="genPreview()">Régénérer</button></div>
+</div>
+<div style="background:var(--card2);border-radius:8px;padding:${_genPreviewDevice==='desktop'?'0':'14px'};display:flex;justify-content:center;overflow:auto">
+<iframe title="Aperçu du site" style="width:${mx};max-width:100%;height:640px;border:1px solid var(--border);border-radius:6px;background:#fff" sandbox="allow-same-origin" srcdoc="${_genPreviewHtml.replace(/"/g,'&quot;')}"></iframe>
+</div></div>`;
+}
+
 async function loadGenerator(){
 const stepStyle=`style="border:1px solid var(--border);border-radius:var(--radius);margin-bottom:12px;overflow:hidden"`;
 const stepHead=`style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;cursor:pointer;user-select:none;background:var(--card);transition:background .15s"`;
@@ -1462,6 +1549,13 @@ ${chevron}
 <div class="grid2">
 <div><label>ET Username</label><input id="g-et-user" placeholder="username ElegantThemes"></div>
 <div><label>ET API Key</label><input id="g-et-key" placeholder="Cle API ElegantThemes"></div>
+</div>
+<div class="accent-title" style="margin-top:16px">Couleur principale</div>
+<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Indiquez UNE couleur : l'app dérive automatiquement toute la palette (secondaire, CTA, fonds, textes) avec un contraste accessible. Laissez vide pour la palette par défaut du thème.</div>
+<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+<input type="color" id="g-primary-color-picker" value="#1e6fd9" style="width:46px;height:38px;padding:2px;cursor:pointer" oninput="document.getElementById('g-primary-color').value=this.value;gPalettePreview();">
+<input id="g-primary-color" placeholder="#1e6fd9 (ou vide)" style="width:150px;font-family:var(--mono)" oninput="gPalettePreview()">
+<div id="g-palette-preview" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"></div>
 </div>
 </div></div>`;
 
@@ -1563,10 +1657,19 @@ h+=`<div ${stepStyle}>
 ${chevron}
 </div>
 <div id="gen-step6-body" ${stepBody}>
-<div style="display:flex;gap:10px;margin-bottom:16px">
+<div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
 <button class="btn" id="gen-install-btn" onclick="runFullInstall()">Installer WordPress</button>
+<button class="btn2" id="gen-preview-btn" onclick="genPreview()" title="Génère une maquette de la page d'accueil (couleurs, hero, sections) sans rien installer">Aperçu du site</button>
 </div>
+<div style="font-size:11px;color:var(--muted);margin-bottom:12px">L'aperçu génère une maquette de la page d'accueil (~0,02 $) avec votre palette et vos infos — sans FTP ni installation. Idéal pour valider le rendu avant de lancer.</div>
 <div id="gen-status" style="margin-bottom:10px"></div>
+<div id="gen-progress-wrap" class="hidden" style="margin-bottom:14px">
+<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:5px"><span id="gen-progress-step">—</span><span id="gen-progress-pct" style="font-family:var(--mono);color:var(--accent);font-weight:700">0%</span></div>
+<div style="width:100%;height:9px;background:var(--card2);border-radius:5px;overflow:hidden"><div id="gen-progress-bar" style="width:0%;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .4s"></div></div>
+<div id="gen-stepper" style="margin-top:12px"></div>
+<div id="gen-step-explain" style="margin-top:10px;font-size:12px;line-height:1.6"></div>
+</div>
+<div id="gen-preview-wrap"></div>
 <div id="gen-logs"></div>
 </div></div>`;
 
@@ -1587,6 +1690,7 @@ const m=document.querySelector('input[name="g-logo-mode"]:checked').value;
 document.getElementById('g-logo-url-wrap').classList.toggle('hidden',m!=='url');
 });
 });
+gPalettePreview();
 }
 
 async function runFullInstall(){
@@ -1633,6 +1737,7 @@ et_api_key:document.getElementById('g-et-key').value.trim(),
 generation_mode:genMode,
 site_prompt:document.getElementById('g-site-prompt').value.trim(),
 main_language:document.getElementById('g-lang-main').value,
+primary_color:(document.getElementById('g-primary-color').value||'').trim(),
 competitor_urls:compUrls,
 use_webarchive:document.getElementById('g-webarchive').checked,
 generate_images:document.getElementById('g-gen-images').checked,
@@ -1673,12 +1778,16 @@ if(_genPollInterval)clearInterval(_genPollInterval);
 
 const stepLabels={init:'Initialisation',ftp_upload:'Upload FTP',database:'Base de donnees',wp_install:'Installation WP',logo:'Logo (generation + redimensionnement)',theme:'Installation theme',content:'Generation contenu',eat:'Blocs E-A-T',done:'Termine'};
 
+document.getElementById('gen-progress-wrap').classList.remove('hidden');
+genRenderStepper('init');
+
 _genPollInterval=setInterval(async()=>{
 try{
 const d=await apiFetch(`/generator/pipeline-status/${key}`);
 const stepLabel=stepLabels[d.step]||d.step;
 const statusColor=d.done?(d.error?'var(--danger)':'var(--success)'):'var(--accent)';
 document.getElementById('gen-status').innerHTML=`<span style="color:${statusColor};font-size:13px;font-weight:600">Etape : ${stepLabel}</span>`;
+genRenderStepper(d.done&&!d.error?'done':d.step,d.error);
 let lh='<div class="card log-box">';
 (d.logs||[]).forEach(l=>{
 const cls=l.startsWith('ERROR')?'log-err':l.startsWith('SUCCESS')?'log-win':'log-ok';
@@ -2054,12 +2163,31 @@ if(step5&&step5.classList.contains('hidden')){step5.classList.remove('hidden');s
 
 const GEO_STEP_LABELS={init:'Initialisation',analyze:'Analyse du texte source (Claude)',anchors:'G\u00e9n\u00e9ration des ancres de maillage',paa:'Questions Google (People Also Ask)',serp:'Analyse SERP (information gain)',quality:'Agent juge qualité',blocks:'Optimisation des blocs SEO',competitors:'Analyse concurrentielle',variants:'G\u00e9n\u00e9ration des variantes',assemble:'Assemblage des pages',saving:'Sauvegarde du fichier',done:'Termin\u00e9'};
 
+// Explication + gain SEO par étape (affiché pour l'étape en cours)
+const GEO_STEP_INFO={
+analyze:{explain:'Claude analyse votre texte source pour en extraire structure, entités et intentions.',gain:'Contenu réécrit sur une base solide plutôt que dupliqué.'},
+anchors:{explain:'Génération d\'ancres de maillage variées vers les pages liées.',gain:'Maillage interne naturel = meilleure diffusion du PageRank, moins de sur-optimisation.'},
+paa:{explain:'Récupération des questions « People Also Ask » de Google sur votre mot-clé.',gain:'Répondre aux vraies questions = éligibilité aux featured snippets et au PAA.'},
+serp:{explain:'Analyse des pages concurrentes déjà classées (information gain).',gain:'On couvre ce que les autres oublient = valeur ajoutée reconnue par Google.'},
+quality:{explain:'Un agent juge (Haiku) note la qualité et signale les faiblesses avant export.',gain:'Filet de sécurité : on n\'exporte pas de contenu faible qui plomberait le domaine.'},
+blocks:{explain:'Structuration en blocs SEO (H2/H3, gras, listes, FAQ).',gain:'Lisibilité + structure sémantique = meilleur classement et rich results.'},
+avis:{explain:'Génération d\'avis clients réalistes et localisés.',gain:'Preuve sociale + signaux E-E-A-T = confiance et meilleur taux de conversion.'},
+translate:{explain:'Rédaction des versions linguistiques (contenu natif, pas de traduction automatique).',gain:'Chaque langue indexée séparément par Google = audience élargie, hreflang propre.'},
+competitors:{explain:'Analyse concurrentielle des sites fournis.',gain:'On s\'aligne sur les standards du secteur puis on les dépasse.'},
+variants:{explain:'Génération de variantes de contenu par ville (anti-duplicate).',gain:'Chaque page ville est unique = pas de pénalité pour contenu dupliqué à grande échelle.'},
+assemble:{explain:'Assemblage final des pages avec Schema.org, hreflang et NAP.',gain:'Données structurées + signaux locaux corrects = SEO local qui tient.'},
+saving:{explain:'Sauvegarde du fichier d\'import (WP All Import).',gain:'Import en masse fiable dans WordPress.'},
+};
 // Rendu de la checklist des étapes (✓ / ✗ / ⏳ + message par étape)
 function geoRenderSteps(steps){
 if(!steps||!steps.length)return '';
 const ic={ok:'✓',error:'✗',running:'⏳',skipped:'–',pending:'○'};
 const cl={ok:'var(--success)',error:'var(--danger)',running:'var(--accent)',skipped:'var(--muted)',pending:'var(--muted)'};
-return '<div class="card" style="margin-top:10px;padding:12px 16px">'+steps.map(x=>`<div style="display:flex;gap:8px;align-items:baseline;padding:3px 0;font-size:12px"><span style="color:${cl[x.status]||'var(--muted)'};font-weight:700;width:14px;flex-shrink:0">${ic[x.status]||'○'}</span><span style="color:${x.status==='error'?'var(--danger)':'var(--text)'};font-weight:${x.status==='running'?'700':'500'}">${esc(x.label)}</span>${x.message?`<span style="color:var(--muted);font-size:11px">— ${esc(x.message)}</span>`:''}</div>`).join('')+'</div>';
+let h='<div class="card" style="margin-top:10px;padding:12px 16px">'+steps.map(x=>`<div style="display:flex;gap:8px;align-items:baseline;padding:3px 0;font-size:12px"><span style="color:${cl[x.status]||'var(--muted)'};font-weight:700;width:14px;flex-shrink:0">${ic[x.status]||'○'}</span><span style="color:${x.status==='error'?'var(--danger)':'var(--text)'};font-weight:${x.status==='running'?'700':'500'}">${esc(x.label)}</span>${x.message?`<span style="color:var(--muted);font-size:11px">— ${esc(x.message)}</span>`:''}</div>`).join('');
+const running=steps.find(x=>x.status==='running');
+const info=running&&GEO_STEP_INFO[running.key];
+if(info)h+=`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:11.5px;line-height:1.6"><div style="color:var(--text)">${esc(info.explain)}</div><div style="color:var(--success);margin-top:2px">✔ Gain : ${esc(info.gain)}</div></div>`;
+return h+'</div>';
 }
 // Estimation du coût FIXE (indépendant du nombre de villes)
 async function geoEstimateCost(){
@@ -2189,10 +2317,48 @@ document.getElementById('tab-4').innerHTML=`
 </div>
 <div id="idx-msg" style="margin-top:10px;font-size:12px;min-height:16px"></div>
 </div>
-<div class="card">
+<div class="card mb-16">
 <div class="accent-title">3. Statut d'indexation</div>
 <div id="idx-results" style="color:var(--muted);font-size:13px">Lance une vérification pour voir le statut Google de tes URLs (quota ~2000/jour).</div>
+</div>
+<div class="section-title mb-12" style="margin-top:24px">Suivi de position</div>
+<div class="card">
+<div class="accent-title">Positions Google (DataForSEO — sans proxy)</div>
+<div style="font-size:11px;color:var(--muted);margin-bottom:10px">Position réelle de votre domaine sur Google pour chaque mot-clé. Aucun proxy : DataForSEO renvoie la SERP légalement (~0,002 $/mot-clé).</div>
+<div class="grid2 mb-12">
+<div><label>Domaine à suivre</label><input id="pos-domain" placeholder="monsite.fr"></div>
+<div style="display:flex;gap:8px">
+<div style="flex:1"><label>Lieu</label><input id="pos-location" value="France"></div>
+<div style="width:90px"><label>Langue</label><input id="pos-lang" value="fr"></div>
+</div>
+</div>
+<label>Mots-clés (un par ligne, max 100)</label>
+<textarea id="pos-keywords" rows="5" placeholder="plombier lyon&#10;dépannage plomberie villeurbanne&#10;..."></textarea>
+<div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">
+<button class="btn" onclick="posTrack()">Vérifier les positions</button>
+<span id="pos-estimate" style="font-size:11.5px;color:var(--muted)"></span>
+</div>
+<div id="pos-progress" class="hidden" style="margin-top:12px">
+<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px"><span id="pos-progress-label">Vérification...</span><span id="pos-progress-count" style="font-family:var(--mono);color:var(--accent)">0/0</span></div>
+<div style="width:100%;height:8px;background:var(--card2);border-radius:4px;overflow:hidden"><div id="pos-progress-bar" style="width:0%;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .3s"></div></div>
+</div>
+<div id="pos-msg" style="margin-top:10px;font-size:12px;min-height:16px"></div>
+<div id="pos-results" style="margin-top:12px"></div>
 </div>`;
+if(_pendingIdxUrls&&_pendingIdxUrls.length){
+document.getElementById('idx-urls').value=_pendingIdxUrls.join('\n');
+const n=_pendingIdxUrls.length;_pendingIdxUrls=null;
+idxMsg(`${n} URL(s) importées depuis le crawl. Sélectionne le site puis vérifie l'indexation (max 50 par appel).`,true);
+}
+}
+let _pendingIdxUrls=null;
+function crToIndexation(){
+const pages=(_crawlReport&&_crawlReport.pages)||[];
+const urls=pages.filter(p=>p.status<400&&(p.content_type||'').indexOf('html')>=0&&p.indexable!==false).map(p=>p.url);
+if(!urls.length){crMsg('Aucune page HTML indexable à vérifier.',false);return;}
+_pendingIdxUrls=urls.slice(0,200);
+const tabBtn=document.querySelectorAll('.tab')[4];
+switchTab(4,tabBtn);
 }
 function idxSiteId(){const v=document.getElementById('idx-site').value;return v?Number(v):null;}
 function idxUrls(){return document.getElementById('idx-urls').value.split('\n').map(u=>u.trim()).filter(u=>u.startsWith('http'));}
@@ -2227,13 +2393,30 @@ idxMsg(`Vérification de ${urls.length} URLs via GSC (peut prendre ~${Math.ceil(
 const resEl=document.getElementById('idx-results');
 try{
 const d=await apiFetch('/indexation/check',{method:'POST',body:JSON.stringify({site_id:id,urls})});
-idxMsg(`✓ ${d.indexed}/${d.total} indexées`,d.indexed===d.total);
-let rh=`<div style="display:flex;gap:16px;margin-bottom:12px;font-size:13px;font-weight:700;flex-wrap:wrap">
+idxMsg(`✓ ${d.indexed}/${d.total} indexées (${d.indexation_rate}%)`,d.indexed===d.total);
+const rate=d.indexation_rate!=null?d.indexation_rate:Math.round(d.indexed/d.total*100);
+const rcol=rate>=80?'var(--success)':rate>=50?'var(--warn)':'var(--danger)';
+let rh=`<div class="card" style="margin-bottom:12px;display:flex;gap:20px;align-items:center;flex-wrap:wrap">
+<div style="text-align:center;flex-shrink:0"><div style="font-size:34px;font-weight:800;font-family:var(--mono);color:${rcol};line-height:1">${rate}%</div><div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-top:2px">Taux d'indexation</div></div>
+<div style="flex:1;min-width:200px">
+<div style="display:flex;gap:16px;font-size:13px;font-weight:700;flex-wrap:wrap;margin-bottom:4px">
 <span style="color:var(--success)">${d.indexed} indexées</span>
 <span style="color:${d.not_indexed?'var(--danger)':'var(--muted)'}">${d.not_indexed} non indexées</span>
 ${d.to_enrich&&d.to_enrich.length?`<span style="color:var(--warn)">${d.to_enrich.length} à enrichir</span>`:''}
-${d.to_resubmit&&d.to_resubmit.length?`<span style="color:var(--blue)">${d.to_resubmit.length} à re-soumettre</span>`:''}
-${d.to_prune&&d.to_prune.length?`<span style="color:var(--muted)">${d.to_prune.length} à élaguer</span>`:''}</div>`;
+${d.to_resubmit&&d.to_resubmit.length?`<span style="color:var(--accent)">${d.to_resubmit.length} à re-soumettre</span>`:''}
+${d.to_prune&&d.to_prune.length?`<span style="color:var(--muted)">${d.to_prune.length} à élaguer</span>`:''}</div>
+<div style="height:7px;background:var(--card2);border-radius:4px;overflow:hidden"><div style="width:${rate}%;height:100%;background:${rcol}"></div></div>
+</div></div>`;
+// Ventilation par langue (Google indexe chaque version indépendamment)
+if(d.by_language&&d.by_language.length>1){
+rh+=`<div class="card" style="margin-bottom:12px"><div class="accent-title">Indexation par langue</div>
+<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Google indexe chaque version linguistique séparément — surveillez-les indépendamment.</div>`;
+d.by_language.forEach(l=>{
+const lc=l.rate>=80?'var(--success)':l.rate>=50?'var(--warn)':'var(--danger)';
+rh+=`<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span><b>${esc(l.label)}</b> <span style="color:var(--muted)">${l.indexed}/${l.total}</span></span><b style="font-family:var(--mono);color:${lc}">${l.rate}%</b></div><div style="height:6px;background:var(--card2);border-radius:3px;overflow:hidden"><div style="width:${l.rate}%;height:100%;background:${lc}"></div></div></div>`;
+});
+rh+=`</div>`;
+}
 if(d.recommendation)rh+=`<div class="card" style="margin-bottom:12px;background:var(--card2);font-size:12px;line-height:1.6">${esc(d.recommendation)}</div>`;
 d.results.forEach(r=>{
 rh+=`<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px">
@@ -2242,6 +2425,60 @@ rh+=`<div style="display:flex;justify-content:space-between;gap:10px;padding:5px
 });
 resEl.innerHTML=rh;
 }catch(e){idxMsg(e.message,false);}
+}
+
+// SUIVI DE POSITION (DataForSEO, sans proxy)
+let _posPoll=null;
+function posMsg(t,ok){const el=document.getElementById('pos-msg');if(el){el.style.color=ok?'var(--success)':'var(--danger)';el.textContent=t;}}
+function posKeywords(){return document.getElementById('pos-keywords').value.split('\n').map(k=>k.trim()).filter(Boolean);}
+async function posTrack(){
+const domain=document.getElementById('pos-domain').value.trim();
+const keywords=posKeywords();
+if(!domain){posMsg('Renseigne le domaine à suivre.',false);return;}
+if(!keywords.length){posMsg('Ajoute au moins un mot-clé.',false);return;}
+const body={domain,keywords,location:document.getElementById('pos-location').value.trim()||'France',language:document.getElementById('pos-lang').value.trim()||'fr'};
+posMsg('',true);
+const pw=document.getElementById('pos-progress');pw.classList.remove('hidden');
+document.getElementById('pos-results').innerHTML='';
+let res;
+try{res=await apiFetch('/positions/track',{method:'POST',body:JSON.stringify(body)});}
+catch(e){pw.classList.add('hidden');posMsg('Erreur : '+e.message,false);return;}
+if(_posPoll)clearInterval(_posPoll);
+_posPoll=setInterval(async()=>{
+try{
+const st=await apiFetch('/positions/status/'+res.key);
+document.getElementById('pos-progress-count').textContent=`${st.done}/${st.total}`;
+document.getElementById('pos-progress-bar').style.width=(st.total?Math.round(st.done/st.total*100):5)+'%';
+if(st.status==='done'){clearInterval(_posPoll);pw.classList.add('hidden');posRender(st);}
+if(st.status==='error'){clearInterval(_posPoll);pw.classList.add('hidden');posMsg('Échec : '+(st.error||'inconnu'),false);}
+}catch(e){clearInterval(_posPoll);pw.classList.add('hidden');posMsg(e.message,false);}
+},1500);
+}
+function posRender(st){
+const s=st.summary||{};
+posMsg(`✓ ${s.ranked||0}/${s.tracked||0} mots-clés positionnés`,true);
+let h=`<div class="card" style="padding:0;overflow:hidden;margin-bottom:12px"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr))">
+${crCard('Suivis',s.tracked||0)}
+${crCard('Positionnés',s.ranked||0,'var(--success)')}
+${crCard('Top 3',s.top3||0,'var(--success)')}
+${crCard('Top 10',s.top10||0,'var(--accent)')}
+${crCard('Hors top 100',s.not_ranked||0,s.not_ranked?'var(--danger)':'var(--muted)')}
+${crCard('Pos. moyenne',s.avg_position!=null?s.avg_position:'—',s.avg_position!=null&&s.avg_position<=10?'var(--success)':'var(--warn)')}
+</div></div>`;
+h+=`<div class="card" style="padding:0;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+<thead><tr style="background:var(--card2);text-align:left"><th style="padding:8px">Mot-clé</th><th style="padding:8px">Position</th><th style="padding:8px">URL classée</th><th style="padding:8px">1er concurrent</th></tr></thead><tbody>`;
+(st.results||[]).forEach(r=>{
+const rk=r.rank;const rcol=!rk?'var(--danger)':rk<=3?'var(--success)':rk<=10?'var(--accent)':'var(--warn)';
+const top1=(r.top3&&r.top3[0])?r.top3[0].domain:'';
+h+=`<tr style="border-top:1px solid var(--border)">
+<td style="padding:7px 8px">${esc(r.keyword)}</td>
+<td style="padding:7px 8px;font-weight:700;font-family:var(--mono);color:${rcol}">${rk?'#'+rk:(r.error?'erreur':'> 100')}</td>
+<td style="padding:7px 8px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.url||'')}">${esc((r.url||'').replace(/^https?:\/\/[^/]+/,'')||'—')}</td>
+<td style="padding:7px 8px;color:var(--muted)">${esc(top1||'—')}</td>
+</tr>`;
+});
+h+=`</tbody></table></div>`;
+document.getElementById('pos-results').innerHTML=h;
 }
 
 // SETTINGS
@@ -2253,11 +2490,15 @@ document.getElementById('tab-5').innerHTML=`
 <div class="card mb-16">
 <div class="grid2 mb-12">
 <div><label>URL du site à crawler</label><input id="cr-url" placeholder="https://monsite.fr"></div>
-<div><label>Pages max</label><input id="cr-max" type="number" min="10" max="2000" value="300"></div>
+<div><label>Pages max</label><input id="cr-max" type="number" min="10" max="50000" value="300" oninput="crUpdateEstimate()"></div>
 </div>
 <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
 <label style="display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text);margin:0"><input type="checkbox" id="cr-sitemap" checked style="width:auto;accent-color:var(--accent)"> Détecter le sitemap automatiquement</label>
 <input id="cr-sitemap-url" placeholder="ou URL de sitemap précise (optionnel)" style="flex:1;min-width:220px">
+</div>
+<div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+<label style="display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text);margin:0" title="Plus de workers, et on saute la détection de quasi-doublons (coûteuse). Recommandé au-delà de 3000 pages."><input type="checkbox" id="cr-fast" style="width:auto;accent-color:var(--accent)" onchange="crUpdateEstimate()"> Mode rapide (gros sites)</label>
+<span id="cr-estimate" style="font-size:11.5px;color:var(--muted)"></span>
 </div>
 <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
 <button class="btn" onclick="startCrawl()">Lancer le crawl</button>
@@ -2270,12 +2511,27 @@ document.getElementById('tab-5').innerHTML=`
 <div id="cr-msg" style="margin-top:10px;font-size:12px;min-height:16px"></div>
 </div>
 <div id="cr-results"></div>`;
+crUpdateEstimate();
+}
+let _crEstTimer=null;
+function crUpdateEstimate(){
+if(_crEstTimer)clearTimeout(_crEstTimer);
+_crEstTimer=setTimeout(async()=>{
+const el=document.getElementById('cr-estimate');if(!el)return;
+const mp=Number(document.getElementById('cr-max').value)||300;
+const fast=document.getElementById('cr-fast').checked;
+try{
+const d=await apiFetch('/crawl/estimate',{method:'POST',body:JSON.stringify({max_pages:mp,fast})});
+const t=d.estimated_minutes>=1?`~${d.estimated_minutes} min`:`~${d.estimated_seconds} s`;
+el.innerHTML=`⏱️ Estimation : <b>${t}</b> (${d.workers} connexions parallèles) · ${d.proximity_enabled?'doublons inclus':'sans détection de doublons'}`;
+}catch(e){el.textContent='';}
+},350);
 }
 function crMsg(t,ok){const el=document.getElementById('cr-msg');if(el){el.style.color=ok?'var(--success)':'var(--danger)';el.textContent=t;}}
 async function startCrawl(){
 const url=document.getElementById('cr-url').value.trim();
 if(!url){crMsg('⚠️ Renseignez l\'URL du site à crawler.',false);return;}
-const body={url,max_pages:Number(document.getElementById('cr-max').value)||300,include_sitemap:document.getElementById('cr-sitemap').checked,sitemap_url:document.getElementById('cr-sitemap-url').value.trim()};
+const body={url,max_pages:Number(document.getElementById('cr-max').value)||300,include_sitemap:document.getElementById('cr-sitemap').checked,sitemap_url:document.getElementById('cr-sitemap-url').value.trim(),fast:document.getElementById('cr-fast').checked};
 crMsg('',true);
 const pw=document.getElementById('cr-progress');pw.classList.remove('hidden');
 document.getElementById('cr-results').innerHTML='';
@@ -2314,6 +2570,8 @@ ${crCard('Quasi-doublons',s.duplicate_content,s.duplicate_content?'var(--danger)
 ${crCard('Pages ville',s.city_pages,'var(--accent)')}
 ${crCard('Ville absente Title',s.city_missing_in_title,s.city_missing_in_title?'var(--warn)':'var(--success)')}
 ${crCard('Orphelines',s.orphan_pages,s.orphan_pages?'var(--danger)':'var(--success)')}
+${s.maillage_health!=null?crCard('Santé maillage',s.maillage_health+'/100',s.maillage_health>=80?'var(--success)':s.maillage_health>=60?'var(--warn)':'var(--danger)'):''}
+${s.cannibalization_groups?crCard('Cannibalisation',s.cannibalization_groups,'var(--danger)'):''}
 ${s.is_multilingual?crCard('Langues',Object.keys(s.languages||{}).filter(l=>l!=='?').length,'var(--accent)'):''}
 ${s.is_multilingual?crCard('Problèmes hreflang',s.hreflang_issues,s.hreflang_issues?'var(--danger)':'var(--success)'):''}
 ${s.missing_html_lang?crCard('Sans attribut lang',s.missing_html_lang,'var(--warn)'):''}
@@ -2326,8 +2584,11 @@ h+=`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-ite
 <button class="btn2 btn-sm cr-tab" data-f="city" onclick="crSetFilter('city')">Pages ville (${s.city_pages})</button>
 <button class="btn2 btn-sm cr-tab" data-f="i18n" onclick="crSetFilter('i18n')">Multilingue &amp; hreflang</button>
 <button class="btn2 btn-sm cr-tab" data-f="maillage" onclick="crSetFilter('maillage')">Maillage interne</button>
-<button class="btn" style="margin-left:auto;background:var(--success)" onclick="downloadAuth('/crawl/download/'+_crawlKey,'crawl.xlsx')">Exporter en Excel</button>
-</div><div id="cr-view"></div>`;
+<button class="btn2 btn-sm" style="margin-left:auto" onclick="crToIndexation()" title="Envoie les URLs crawlées vers l'onglet Indexation pour vérifier lesquelles sont indexées par Google">Vérifier l'indexation (GSC)</button>
+<button class="btn" style="background:var(--success)" onclick="downloadAuth('/crawl/download/'+_crawlKey,'crawl.xlsx')">Exporter en Excel</button>
+</div>`;
+if(r.pages_truncated>0){h+=`<div class="card" style="margin-bottom:12px;border-left:3px solid var(--warn);font-size:12px;color:var(--muted)">⚠️ Gros crawl : ${r.pages_total.toLocaleString('fr-FR')} pages analysées, ${r.pages_truncated.toLocaleString('fr-FR')} non affichées ici (pages sans problème). <b>Le rapport Excel contient l'intégralité.</b> Les pages à problème sont priorisées à l'écran.</div>`;}
+h+=`<div id="cr-view"></div>`;
 document.getElementById('cr-results').innerHTML=h;
 crSetFilter('all');
 }
@@ -2342,7 +2603,7 @@ else if(f==='city')pages=pages.filter(p=>p.city);
 else if(f==='i18n')pages=pages.filter(p=>p.hreflang_issue||!p.html_lang||p.hreflang_count>0);
 let h=`<div class="card" style="padding:0;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
 <thead><tr style="background:var(--card2);text-align:left">
-<th style="padding:8px">URL</th><th style="padding:8px">Code</th><th style="padding:8px">Langue</th><th style="padding:8px" title="Versions hreflang">hreflang</th><th style="padding:8px">Title</th><th style="padding:8px">H1</th><th style="padding:8px">Ville</th><th style="padding:8px" title="Liens entrants internes">Inlinks</th><th style="padding:8px">Mots</th><th style="padding:8px">Sim.</th><th style="padding:8px">Problèmes</th>
+<th style="padding:8px">URL</th><th style="padding:8px">Code</th><th style="padding:8px">Langue</th><th style="padding:8px" title="Versions hreflang">hreflang</th><th style="padding:8px">Title</th><th style="padding:8px">H1</th><th style="padding:8px">Ville</th><th style="padding:8px" title="Liens entrants internes">Inlinks</th><th style="padding:8px" title="PageRank interne (0-100) : force de la page dans le maillage">PR</th><th style="padding:8px" title="Profondeur : nombre de clics depuis l'accueil">Prof.</th><th style="padding:8px">Mots</th><th style="padding:8px">Sim.</th><th style="padding:8px">Problèmes</th>
 </tr></thead><tbody>`;
 pages.slice(0,500).forEach(p=>{
 const path=p.url.replace(/^https?:\/\/[^/]+/,'')||'/';
@@ -2357,6 +2618,8 @@ h+=`<tr style="border-top:1px solid var(--border)">
 <td style="padding:7px 8px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap${!p.h1?';color:var(--danger)':''}" title="${esc(p.h1||'')}">${esc(p.h1||'(vide)')}</td>
 <td style="padding:7px 8px;color:${p.city?'var(--accent)':'var(--muted)'}">${esc(p.city||'—')}</td>
 <td style="padding:7px 8px;text-align:center;font-family:var(--mono);color:${p.inlinks?'var(--text)':'var(--danger)'}">${p.inlinks!=null?p.inlinks:'—'}</td>
+<td style="padding:7px 8px;text-align:center;font-family:var(--mono);color:${p.pagerank>=50?'var(--success)':p.pagerank>=15?'var(--text)':'var(--muted)'}">${p.pagerank!=null?p.pagerank:'—'}</td>
+<td style="padding:7px 8px;text-align:center;font-family:var(--mono);color:${p.click_depth<0?'var(--danger)':p.click_depth>=4?'var(--warn)':'var(--muted)'}">${p.click_depth==null?'—':p.click_depth<0?'∞':p.click_depth}</td>
 <td style="padding:7px 8px;text-align:center;font-family:var(--mono)">${p.word_count||0}</td>
 <td style="padding:7px 8px;text-align:center;font-family:var(--mono);color:${simCol}">${p.max_similarity!=null?p.max_similarity+'%':'—'}</td>
 <td style="padding:7px 8px;color:var(--warn)">${(p.issues||[]).map(esc).join(', ')}</td>
@@ -2366,40 +2629,92 @@ h+=`</tbody></table></div>`;
 if(pages.length>500)h+=`<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:8px">500 premières lignes affichées — export Excel pour la liste complète (${pages.length}).</div>`;
 document.getElementById('cr-view').innerHTML=h;
 }
+function crPath(u){return esc((u||'').replace(/^https?:\/\/[^/]+/,'')||u||'');}
 function crRenderMaillage(){
 const m=_crawlReport.maillage;
 let h='';
-// Suggestions
+// --- Score de santé du maillage ---
+const hs=m.health_score||{};
+if(hs.score!=null){
+const col=hs.score>=80?'var(--success)':hs.score>=60?'var(--warn)':'var(--danger)';
+const partLabels={profondeur:'Pages à ≤3 clics',non_orphelines:'Pages non orphelines',ancres_non_generiques:'Ancres descriptives',silos_cohesifs:'Silos cohésifs'};
+h+=`<div class="card mb-16"><div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap">
+<div style="text-align:center;flex-shrink:0">
+<div style="font-size:38px;font-weight:800;font-family:var(--mono);color:${col};line-height:1">${hs.score}<span style="font-size:16px;color:var(--muted)">/100</span></div>
+<div style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:${col};font-weight:700;margin-top:2px">${esc(hs.verdict||'')}</div>
+<div style="font-size:10px;color:var(--muted);margin-top:2px">Santé du maillage</div>
+</div>
+<div style="flex:1;min-width:240px;display:grid;grid-template-columns:1fr 1fr;gap:8px 16px">`;
+Object.entries(hs.parts||{}).forEach(([k,v])=>{
+const pc=v>=80?'var(--success)':v>=50?'var(--warn)':'var(--danger)';
+h+=`<div><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span style="color:var(--muted)">${partLabels[k]||k}</span><b style="font-family:var(--mono);color:${pc}">${v}%</b></div>
+<div style="height:5px;background:var(--card2);border-radius:3px;overflow:hidden"><div style="width:${v}%;height:100%;background:${pc}"></div></div></div>`;
+});
+h+=`</div></div></div>`;
+}
+// --- Suggestions scorées par impact ---
 const byPrio={Haute:[],Moyenne:[],Basse:[]};
 (m.suggestions||[]).forEach(x=>{(byPrio[x.priority]||byPrio.Basse).push(x);});
-h+=`<div class="card mb-16"><div class="accent-title">Suggestions d'ajustement du maillage (${(m.suggestions||[]).length})</div>`;
+h+=`<div class="card mb-16"><div class="accent-title">Suggestions de liens, triées par impact estimé (${(m.suggestions||[]).length})</div>
+<div style="font-size:11px;color:var(--muted);margin-bottom:4px">L'impact combine le potentiel de la page cible, la puissance (PageRank) du donneur, la pertinence thématique et l'urgence.</div>`;
 if(!(m.suggestions||[]).length)h+=`<div style="font-size:12px;color:var(--muted)">Aucune suggestion — maillage sain.</div>`;
 ['Haute','Moyenne','Basse'].forEach(pr=>{
 if(!byPrio[pr].length)return;
 const col=pr==='Haute'?'var(--danger)':pr==='Moyenne'?'var(--warn)':'var(--muted)';
 h+=`<div style="margin-top:10px;font-size:11px;font-weight:700;text-transform:uppercase;color:${col}">Priorité ${pr} (${byPrio[pr].length})</div>`;
 byPrio[pr].slice(0,25).forEach(x=>{
-const fp=x.from.replace(/^https?:\/\/[^/]+/,'')||x.from;const tp=x.to.replace(/^https?:\/\/[^/]+/,'')||x.to;
 h+=`<div style="padding:7px 0;border-bottom:1px solid var(--border);font-size:12px">
-<div><span style="color:var(--muted)">${esc(fp)}</span> → <b>${esc(tp)}</b> <span style="color:var(--accent)">ancre: « ${esc(x.anchor)} »</span></div>
+<div style="display:flex;justify-content:space-between;gap:10px"><div><span style="color:var(--muted)">${crPath(x.from)}</span> → <b>${crPath(x.to)}</b> <span style="color:var(--accent)">ancre: « ${esc(x.anchor)} »</span></div>${x.impact?`<b style="font-family:var(--mono);color:${col};flex-shrink:0" title="Impact estimé">${x.impact}</b>`:''}</div>
 <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(x.reason)}</div></div>`;
 });
 });
 h+=`</div>`;
-// Orphelines + top inlinks côte à côte
-h+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">`;
-h+=`<div class="card"><div class="accent-title" style="color:var(--danger)">Pages orphelines (${(m.orphans||[]).length})</div>`;
-if(!(m.orphans||[]).length)h+=`<div style="font-size:12px;color:var(--muted)">Aucune 🎉</div>`;
-(m.orphans||[]).slice(0,50).forEach(o=>{h+=`<div style="font-size:11.5px;padding:4px 0;border-bottom:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(o)}">${esc(o.replace(/^https?:\/\/[^/]+/,'')||o)}</div>`;});
+// --- Cannibalisation ---
+if((m.cannibalization||[]).length){
+h+=`<div class="card mb-16"><div class="accent-title" style="color:var(--danger)">Cannibalisation détectée (${m.cannibalization.length})</div>
+<div style="font-size:11px;color:var(--muted);margin-bottom:6px">Plusieurs pages visent le même mot-clé/intention et se concurrencent dans Google. Fusionnez-les ou différenciez-les.</div>`;
+m.cannibalization.slice(0,30).forEach(c=>{
+h+=`<div style="padding:7px 0;border-bottom:1px solid var(--border);font-size:12px">
+<div><span style="background:var(--card2);padding:1px 6px;border-radius:3px;font-size:10px;color:var(--warn)">${esc(c.type)}</span> <b>${esc(c.key)}</b> <span style="color:var(--muted)">(${c.urls.length} pages)</span></div>`;
+c.urls.slice(0,6).forEach(u=>{h+=`<div style="font-size:11px;color:var(--muted);padding-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(u)}">• ${crPath(u)}</div>`;});
 h+=`</div>`;
-h+=`<div class="card"><div class="accent-title">Pages les plus liées (inlinks)</div>`;
-(m.top_linked||[]).slice(0,15).forEach(t=>{h+=`<div style="display:flex;justify-content:space-between;gap:8px;font-size:11.5px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(t.url)}">${esc(t.url.replace(/^https?:\/\/[^/]+/,'')||t.url)}</span><b style="font-family:var(--mono);flex-shrink:0">${t.inlinks}</b></div>`;});
-h+=`</div></div>`;
+});
+h+=`</div>`;
+}
+// --- Silos ---
+if((m.silos||[]).length){
+h+=`<div class="card mb-16"><div class="accent-title">Cohésion des silos (service × villes)</div>
+<div style="padding:0;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px"><thead><tr style="text-align:left;color:var(--muted)"><th style="padding:5px 8px">Cluster</th><th style="padding:5px 8px">Pages</th><th style="padding:5px 8px">Densité</th><th style="padding:5px 8px">Cohésion</th><th style="padding:5px 8px">Hub de tête</th></tr></thead><tbody>`;
+m.silos.slice(0,20).forEach(si=>{
+const cc=si.cohesion==='forte'?'var(--success)':si.cohesion==='moyenne'?'var(--warn)':'var(--danger)';
+h+=`<tr style="border-top:1px solid var(--border)"><td style="padding:5px 8px"><b>${esc(si.cluster)}</b></td><td style="padding:5px 8px;font-family:var(--mono)">${si.pages}</td><td style="padding:5px 8px;font-family:var(--mono)">${si.density}</td><td style="padding:5px 8px;color:${cc};font-weight:600">${esc(si.cohesion)}</td><td style="padding:5px 8px;color:var(--muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(si.hub||'')}">${si.hub?crPath(si.hub)+' ('+si.hub_coverage+'%)':'—'}</td></tr>`;
+});
+h+=`</tbody></table></div></div>`;
+}
+// --- Grille : orphelines / inatteignables / profondes / top PageRank / puits ---
+h+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">`;
+const listCard=(title,col,items,fmt,empty)=>{
+let c=`<div class="card"><div class="accent-title"${col?` style="color:${col}"`:''}>${title} (${items.length})</div>`;
+if(!items.length)c+=`<div style="font-size:12px;color:var(--muted)">${empty||'Aucune 🎉'}</div>`;
+items.slice(0,50).forEach(it=>{c+=fmt(it);});
+return c+`</div>`;
+};
+h+=listCard('Pages orphelines','var(--danger)',m.orphans||[],
+o=>`<div style="font-size:11.5px;padding:4px 0;border-bottom:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(o)}">${crPath(o)}</div>`,'Aucune 🎉');
+h+=listCard('Inatteignables depuis l\'accueil','var(--danger)',m.unreachable||[],
+o=>`<div style="font-size:11.5px;padding:4px 0;border-bottom:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(o)}">${crPath(o)}</div>`,'Aucune 🎉');
+h+=listCard('Pages profondes (≥4 clics)','var(--warn)',m.deep_pages||[],
+d=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:11.5px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(d.url)}">${crPath(d.url)}</span><b style="font-family:var(--mono);color:var(--warn);flex-shrink:0">${d.depth} clics</b></div>`,'Aucune 🎉');
+h+=listCard('Pages les plus fortes (PageRank)','',m.top_linked||[],
+t=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:11.5px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(t.url)}">${crPath(t.url)}</span><span style="flex-shrink:0;font-family:var(--mono)"><b style="color:var(--success)">${t.pagerank}</b> <span style="color:var(--muted)">· ${t.inlinks} in</span></span></div>`);
+if((m.sinks||[]).length)h+=listCard('Puits (jus piégé)','var(--warn)',m.sinks||[],
+s=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:11.5px;padding:4px 0;border-bottom:1px solid var(--border)" title="Reçoit du PageRank mais ne redistribue aucun lien"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${crPath(s.url)}</span><b style="font-family:var(--mono);flex-shrink:0">${s.pagerank}</b></div>`);
+h+=`</div>`;
 document.getElementById('cr-view').innerHTML=h;
 }
 
 function loadSettings(){
-document.getElementById('tab-5').innerHTML=`
+document.getElementById('tab-6').innerHTML=`
 <div class="section-title mb-12">Paramètres</div>
 <div class="card"><div class="accent-title">Configuration API</div><div style="font-size:12px;color:var(--muted);line-height:1.8">Les clés API (Claude, DataForSEO, Google OAuth) se configurent dans les variables d'environnement de Coolify.</div></div>
 <div class="card"><div class="accent-title">Compte admin</div><div style="font-size:12px;color:var(--muted)">ADMIN_EMAIL et ADMIN_PASSWORD dans Coolify.</div></div>`;

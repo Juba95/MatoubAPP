@@ -121,6 +121,48 @@ def submit_indexnow(req: SubmitRequest, db: Session = Depends(get_db)):
     raise HTTPException(status_code=502, detail=f"IndexNow {resp.status_code} : {detail}")
 
 
+def _url_language(url: str, known: set[str]) -> str:
+    """Déduit la langue d'une URL depuis son premier segment de chemin.
+
+    Google indexe chaque version linguistique indépendamment ; on regroupe donc
+    par préfixe de langue (/en/, /de/…). Retourne le code ou '' (langue par défaut,
+    sans préfixe)."""
+    from urllib.parse import urlparse
+    from app.services.i18n import normalize
+    seg = urlparse(url).path.strip("/").split("/")
+    first = seg[0].lower() if seg and seg[0] else ""
+    if len(first) == 2 and first.isalpha():
+        code = normalize(first)
+        if not known or code in known:
+            return code
+    return ""
+
+
+def _language_breakdown(results: list[dict]) -> list[dict]:
+    """Taux d'indexation par langue (préfixe d'URL)."""
+    from collections import defaultdict
+    from app.services.i18n import lang_name
+    known = {r.get("language", "") for r in results if r.get("language")}
+    groups: dict[str, list] = defaultdict(list)
+    for r in results:
+        lg = r.get("language") or _url_language(r["url"], known)
+        groups[lg].append(r)
+    out = []
+    for lg, items in groups.items():
+        idx = sum(1 for r in items if r.get("indexed"))
+        code = lg or "default"
+        label = "Langue principale (sans préfixe)" if not lg else lang_name(lg, "native")
+        out.append({
+            "language": code,
+            "label": label,
+            "total": len(items),
+            "indexed": idx,
+            "not_indexed": len(items) - idx,
+            "rate": round(idx / len(items) * 100) if items else 0,
+        })
+    return sorted(out, key=lambda x: -x["total"])
+
+
 class CheckRequest(BaseModel):
     site_id: int
     urls: list[str]
@@ -131,7 +173,8 @@ def check_indexation(req: CheckRequest, db: Session = Depends(get_db)):
     """Vérifie l'indexation Google d'un lot d'URLs (URL Inspection API GSC).
 
     Limité à 50 URLs par appel pour rester loin du quota (~2000/jour).
-    """
+    Retourne un taux d'indexation global ET par langue (Google indexe chaque
+    version linguistique indépendamment)."""
     from app.services.search_console import SearchConsoleClient
 
     site = _get_site(db, req.site_id)
@@ -157,11 +200,14 @@ def check_indexation(req: CheckRequest, db: Session = Depends(get_db)):
                 raise HTTPException(status_code=502, detail=f"Inspection GSC en échec : {exc}")
 
     indexed = sum(1 for r in results if r["indexed"])
+    total = len(results)
     buckets = _classify(results)
     return {
-        "total": len(results),
+        "total": total,
         "indexed": indexed,
-        "not_indexed": len(results) - indexed,
+        "not_indexed": total - indexed,
+        "indexation_rate": round(indexed / total * 100) if total else 0,
+        "by_language": _language_breakdown(results),
         "to_enrich": buckets["to_enrich"],
         "to_resubmit": buckets["to_resubmit"],
         "to_prune": buckets["to_prune"],

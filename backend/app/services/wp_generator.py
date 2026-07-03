@@ -1049,6 +1049,86 @@ class EATGenerator:
 #  THEME GENERATOR — Claude
 # ═════════════════════════════════════════════════════════════════
 
+def _palette_instruction(palette: dict | None) -> str:
+    """Impose la palette de couleurs dérivée (une couleur principale → variantes)."""
+    if not palette:
+        return ""
+    return (
+        "\n\nPALETTE DE COULEURS IMPOSÉE (dérivée de la couleur principale du client, "
+        "à respecter EXACTEMENT dans tout le thème) :\n"
+        f"- Couleur principale (header, liens, titres) : {palette['primary']} "
+        f"(texte dessus : {palette['text_on_primary']}, hover : {palette['primary_hover']})\n"
+        f"- Secondaire (accents) : {palette['secondary']}\n"
+        f"- Fond clair (sections alternées) : {palette['light']}\n"
+        f"- Neutre foncé (footer, textes) : {palette['neutre']}\n"
+        f"- CTA / boutons d'action : {palette['cta']} "
+        f"(texte dessus : {palette['text_on_cta']}, hover : {palette['cta_hover']})\n"
+        "N'invente PAS d'autres couleurs vives : reste sur cette palette."
+    )
+
+
+def build_preview_html(config: dict, api_key: str) -> str:
+    """Génère une maquette HTML autonome de la page d'accueil (aperçu avant
+    installation). Une seule page self-contained (CSS inline), respectant la
+    palette, la langue et les infos entreprise. Aucun FTP/WP requis."""
+    palette = config.get("palette")
+    language = config.get("main_language", "fr")
+    eat = config.get("eat", {}) or {}
+    site_name = config.get("site_name", "Mon Site")
+    prompt = (config.get("site_prompt") or "").strip()
+
+    from app.services.i18n import normalize, lang_name
+    code = normalize(language)
+    lang_line = "" if code == "fr" else (
+        f"\nLANGUAGE: write ALL visible text in {lang_name(code, 'en')} "
+        f"({lang_name(code, 'native')}), and set <html lang=\"{code}\">."
+    )
+
+    biz_bits = []
+    if eat.get("name"):
+        biz_bits.append(f"Nom : {eat['name']}")
+    if eat.get("address"):
+        biz_bits.append(f"Adresse : {eat['address']}")
+    if eat.get("phone"):
+        biz_bits.append(f"Téléphone : {eat['phone']}")
+    if eat.get("email"):
+        biz_bits.append(f"Email : {eat['email']}")
+    biz_block = ("\n\nINFOS ENTREPRISE :\n" + "\n".join(biz_bits)) if biz_bits else ""
+
+    system = (
+        "You are an expert web designer. Produce ONE self-contained HTML page "
+        "(a realistic homepage MOCKUP) for the described business. "
+        "Return ONLY the HTML document, starting with <!DOCTYPE html>. "
+        "All CSS inline in a single <style> tag in <head>. NO external resources "
+        "(no CDN, no external fonts/images/scripts). For images use inline SVG or "
+        "CSS gradients as placeholders. The page MUST include: sticky header with "
+        "logo text + nav, a hero with headline + subtitle + a CTA button, a "
+        "3-4 cards services section, a reassurance/E-E-A-T strip, a short FAQ, and "
+        "a footer with NAP (name/address/phone) + copyright. Modern, responsive, "
+        "mobile-first. Realistic French copy (no lorem, no AI clichés)."
+    )
+    user = f"SITE : {site_name}\n\nBRIEF :\n{prompt or '(aucun brief — invente un site crédible)'}"
+    user += biz_block
+    user += _palette_instruction(palette)
+    user += lang_line
+    if not palette:
+        user += "\n\nChoisis une palette sobre et professionnelle (2-3 couleurs max)."
+
+    client = anthropic.Anthropic(api_key=api_key)
+    resp = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=8000,
+        system=system,
+        messages=[{"role": "user", "content": user}],
+    )
+    html = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()
+    # Nettoyage d'éventuels fences markdown
+    if html.startswith("```"):
+        html = re.sub(r"^```[a-zA-Z]*\n", "", html)
+        html = re.sub(r"\n```\s*$", "", html)
+    return html
+
+
 def _theme_lang_instruction(language: str) -> str:
     """Force la langue de rédaction du thème (le prompt système est en français
     par défaut). Vide pour le français."""
@@ -1081,6 +1161,7 @@ class ThemeGenerator:
         logo_url: str | None = None,
         eat_context: str | None = None,
         language: str = "fr",
+        palette: dict | None = None,
     ) -> dict:
         """Genere un theme PHP custom complet. Retourne le dict JSON."""
         logger.info("Generation du theme custom avec Claude")
@@ -1149,6 +1230,7 @@ RULES:
         if eat_context:
             full_prompt += eat_context
         full_prompt += _theme_lang_instruction(language)
+        full_prompt += _palette_instruction(palette)
 
         raw = self._call(system, full_prompt, max_tokens=12000)
         data = json.loads(raw)
@@ -1168,6 +1250,7 @@ RULES:
         logo_url: str | None = None,
         eat_context: str | None = None,
         language: str = "fr",
+        palette: dict | None = None,
     ) -> dict:
         """Genere des layouts Divi Builder. Retourne le dict JSON."""
         logger.info("Generation du layout Divi Builder avec Claude")
@@ -1246,6 +1329,7 @@ DIVI SHORTCODE RULES:
         if eat_context:
             full_prompt += eat_context
         full_prompt += _theme_lang_instruction(language)
+        full_prompt += _palette_instruction(palette)
 
         raw = self._call(system, full_prompt, max_tokens=12000)
         data = json.loads(raw)
@@ -2706,6 +2790,7 @@ class WPGeneratorPipeline:
             generator = ThemeGenerator(claude_client)
             site_prompt = competitor_brief or config.get("site_prompt", "")
             site_lang = config.get("main_language", "fr")
+            site_palette = config.get("palette")
 
             if mode == "divi":
                 theme_data = generator.generate_divi(
@@ -2715,6 +2800,7 @@ class WPGeneratorPipeline:
                     logo_url=logo_url,
                     eat_context=eat_context,
                     language=site_lang,
+                    palette=site_palette,
                 )
             else:
                 theme_data = generator.generate_custom(
@@ -2724,6 +2810,7 @@ class WPGeneratorPipeline:
                     logo_url=logo_url,
                     eat_context=eat_context,
                     language=site_lang,
+                    palette=site_palette,
                 )
 
             if logo_url and theme_data:

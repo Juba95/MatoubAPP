@@ -156,14 +156,23 @@ def detect_language(html_lang: str, text: str) -> str:
 class SiteCrawler:
     """Crawle un site et produit un rapport SEO par page + analyse de maillage."""
 
+    # Plafond dur (garde-fou mémoire/temps). Au-delà, préférer un vrai crawler dédié.
+    MAX_PAGES_CAP = 50000
+    MAX_WORKERS_CAP = 32
+    # Au-delà de ce nombre de pages, la détection de quasi-doublons (O(n²)) est
+    # désactivée par défaut (trop coûteuse) sauf si explicitement demandée.
+    PROXIMITY_AUTO_LIMIT = 3000
+
     def __init__(
         self,
         start_url: str,
         max_pages: int = 300,
-        max_workers: int = 8,
+        max_workers: int = 0,
         include_sitemap: bool = True,
         sitemap_url: str = "",
         timeout: float = 15.0,
+        fast: bool = False,
+        compute_proximity: bool | None = None,
         progress=None,
     ):
         if not start_url.startswith(("http://", "https://")):
@@ -173,11 +182,26 @@ class SiteCrawler:
         self.scheme = parsed.scheme
         self.host = parsed.netloc.lower()
         self.root_host = self.host[4:] if self.host.startswith("www.") else self.host
-        self.max_pages = max(1, min(max_pages, 2000))
-        self.max_workers = max(1, min(max_workers, 16))
+        self.max_pages = max(1, min(max_pages, self.MAX_PAGES_CAP))
+        self.fast = fast
+        # Auto-scaling des workers : plus de pages → plus de parallélisme.
+        if not max_workers or max_workers <= 0:
+            if self.max_pages > 10000 or fast:
+                max_workers = 32
+            elif self.max_pages > 2000:
+                max_workers = 24
+            elif self.max_pages > 500:
+                max_workers = 16
+            else:
+                max_workers = 8
+        self.max_workers = max(1, min(max_workers, self.MAX_WORKERS_CAP))
         self.include_sitemap = include_sitemap
         self.sitemap_url = sitemap_url.strip()
         self.timeout = timeout
+        # Proximité : auto (désactivée sur gros crawls ou en mode rapide) sauf override.
+        if compute_proximity is None:
+            compute_proximity = (not fast) and (self.max_pages <= self.PROXIMITY_AUTO_LIMIT)
+        self.compute_proximity = compute_proximity
         self.progress = progress or (lambda done, total: None)
 
         self.pages: dict[str, dict] = {}      # url -> page data
@@ -320,7 +344,8 @@ class SiteCrawler:
                 continue
             if self._same_site(full):
                 internal.append(full)
-                anchors.append({"to": full, "anchor": a.get_text(strip=True)[:80]})
+                anchors.append({"to": full, "anchor": a.get_text(strip=True)[:80],
+                                "rel": a.get("rel", [])})
             else:
                 external += 1
         data["internal_links"] = list(dict.fromkeys(internal))
@@ -368,7 +393,14 @@ class SiteCrawler:
                                 self._queue.append(link)
                     self.progress(len(self.pages), min(self.max_pages, len(self._seen)))
 
-        self._compute_proximity()
+        if self.compute_proximity:
+            self._compute_proximity()
+        else:
+            # Nettoie le texte non utilisé et neutralise les champs de proximité
+            for p in self.pages.values():
+                p.pop("_text", None)
+                p["max_similarity"] = 0
+                p["closest_page"] = ""
         return self._report()
 
     # -- proximité de contenu ---------------------------------------------
@@ -441,6 +473,10 @@ class SiteCrawler:
             "city_pages": sum(1 for p in html_pages if p.get("city")),
             "city_missing_in_title": sum(1 for p in html_pages if p.get("city") and not p.get("city_in_title")),
             "orphan_pages": len(maillage.get("orphans", [])),
+            "unreachable_pages": len(maillage.get("unreachable", [])),
+            "deep_pages": len(maillage.get("deep_pages", [])),
+            "cannibalization_groups": len(maillage.get("cannibalization", [])),
+            "maillage_health": maillage.get("health_score", {}).get("score"),
             "pages_with_issues": sum(1 for p in pages if p.get("issues")),
         }
         # Multilingue
@@ -578,10 +614,12 @@ def build_crawl_excel(report: dict) -> bytes:
         "Meta description", "Long. desc", "H1", "Nb H1", "Nb H2", "Nb H3",
         "Mots", "Canonical", "Meta robots", "Ville détectée",
         "Ville dans Title", "Title=H1", "Liens internes (out)", "Inlinks",
+        "PageRank (0-100)", "Profondeur (clics)",
         "Similarité max %", "Page la + proche", "Problèmes",
     ]
     _write_header(ws, headers)
     for p in report["pages"]:
+        depth = p.get("click_depth", -1)
         ws.append([
             p["url"], p.get("status"), p.get("content_type"),
             "Oui" if p.get("indexable", True) else "Non",
@@ -593,25 +631,45 @@ def build_crawl_excel(report: dict) -> bytes:
             p.get("city", ""), "Oui" if p.get("city_in_title") else ("Non" if p.get("city") else ""),
             "Oui" if p.get("title_h1_match") else "Non",
             p.get("internal_out", 0), p.get("inlinks", 0),
+            p.get("pagerank", 0), ("inatteignable" if depth == -1 else depth),
             p.get("max_similarity", 0), p.get("closest_page", ""),
             " | ".join(p.get("issues", [])),
         ])
 
-    # Feuille 2 : maillage — pages orphelines + top inlinks
+    # Feuille 2 : maillage — orphelines, inatteignables, profondes, top PageRank
     m = report.get("maillage", {})
     ws2 = wb.create_sheet("Maillage")
-    _write_header(ws2, ["Type", "URL", "Inlinks", "Détail"])
+    _write_header(ws2, ["Type", "URL", "PageRank / Inlinks", "Détail"])
     for o in m.get("orphans", []):
         ws2.append(["Orpheline", o, 0, "Aucun lien interne entrant"])
+    for o in m.get("unreachable", []):
+        ws2.append(["Inatteignable", o, 0, "Non atteignable depuis l'accueil"])
+    for dp in m.get("deep_pages", []):
+        ws2.append(["Profonde", dp["url"], "", f"{dp['depth']} clics depuis l'accueil"])
     for t in m.get("top_linked", []):
-        ws2.append(["Top inlinks", t["url"], t["inlinks"], ""])
+        ws2.append(["Top PageRank", t["url"], t.get("pagerank", 0), f"{t.get('inlinks', 0)} inlinks"])
+    for s in m.get("sinks", []):
+        ws2.append(["Puits (jus piégé)", s["url"], s.get("pagerank", 0), "Reçoit du jus mais ne redistribue pas"])
 
-    # Feuille 3 : suggestions de maillage
+    # Feuille 3 : suggestions scorées par impact
     ws3 = wb.create_sheet("Suggestions")
-    _write_header(ws3, ["Priorité", "De (page)", "Vers (page)", "Ancre suggérée", "Raison"])
+    _write_header(ws3, ["Priorité", "Impact estimé", "De (page)", "Vers (page)", "Ancre suggérée", "Raison"])
     for s in m.get("suggestions", []):
-        ws3.append([s.get("priority", ""), s.get("from", ""), s.get("to", ""),
-                    s.get("anchor", ""), s.get("reason", "")])
+        ws3.append([s.get("priority", ""), s.get("impact", ""), s.get("from", ""),
+                    s.get("to", ""), s.get("anchor", ""), s.get("reason", "")])
+
+    # Feuille 4 : cannibalisation
+    ws4 = wb.create_sheet("Cannibalisation")
+    _write_header(ws4, ["Type", "Clé", "Pages en concurrence"])
+    for c in m.get("cannibalization", []):
+        ws4.append([c.get("type", ""), c.get("key", ""), "  |  ".join(c.get("urls", []))])
+
+    # Feuille 5 : silos
+    ws5 = wb.create_sheet("Silos")
+    _write_header(ws5, ["Cluster service", "Pages", "Densité", "Cohésion", "Hub de tête", "Couverture hub %"])
+    for si in m.get("silos", []):
+        ws5.append([si["cluster"], si["pages"], si["density"], si["cohesion"],
+                    si.get("hub", ""), si.get("hub_coverage", 0)])
 
     # Largeurs
     for sheet in wb.worksheets:

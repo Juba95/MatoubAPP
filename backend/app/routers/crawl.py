@@ -29,6 +29,55 @@ class CrawlRequest(BaseModel):
     max_pages: int = 300
     include_sitemap: bool = True
     sitemap_url: str = ""
+    fast: bool = False
+
+
+class EstimateRequest(BaseModel):
+    max_pages: int = 300
+    fast: bool = False
+
+
+# Limite de pages renvoyées au navigateur (le JSON complet de 50k pages est trop
+# lourd). Le rapport complet reste disponible via l'export Excel.
+_MAX_PAGES_TRANSPORT = 5000
+
+
+def _estimate_crawl(max_pages: int, fast: bool) -> dict:
+    """Estime durée et parallélisme d'un crawl (sans le lancer)."""
+    max_pages = max(1, min(max_pages, SiteCrawler.MAX_PAGES_CAP))
+    if max_pages > 10000 or fast:
+        workers = 32
+    elif max_pages > 2000:
+        workers = 24
+    elif max_pages > 500:
+        workers = 16
+    else:
+        workers = 8
+    # ~0,35 s par page et par worker (fetch + parse), marge incluse.
+    per_page = 0.30 if fast else 0.35
+    seconds = max_pages / workers * per_page
+    proximity = (not fast) and max_pages <= SiteCrawler.PROXIMITY_AUTO_LIMIT
+    if proximity:
+        seconds += min(max_pages, 300) ** 2 / 200000  # coût O(n²) borné à 300
+    return {
+        "max_pages": max_pages,
+        "workers": workers,
+        "estimated_seconds": round(seconds),
+        "estimated_minutes": round(seconds / 60, 1),
+        "proximity_enabled": proximity,
+        "note": (
+            "Détection de quasi-doublons désactivée (trop coûteuse à cette échelle) — "
+            "activez un crawl ≤ 3000 pages pour l'obtenir."
+            if not proximity else
+            "Analyse complète (doublons inclus)."
+        ),
+    }
+
+
+@router.post("/estimate")
+def estimate_crawl(req: EstimateRequest):
+    """Estimation de durée avant de lancer un gros crawl."""
+    return _estimate_crawl(req.max_pages, req.fast)
 
 
 @router.post("/start")
@@ -54,6 +103,7 @@ def start_crawl(req: CrawlRequest, background_tasks: BackgroundTasks):
                 max_pages=req.max_pages,
                 include_sitemap=req.include_sitemap,
                 sitemap_url=req.sitemap_url,
+                fast=req.fast,
                 progress=progress,
             )
             report = crawler.run()
@@ -88,12 +138,28 @@ def crawl_result(key: str):
     if not c or c["status"] != "done" or not c["report"]:
         raise HTTPException(status_code=404, detail="Rapport non disponible")
     report = c["report"]
+    all_pages = report["pages"]
+    # Priorise les pages à problèmes quand on doit tronquer (gros crawls).
+    if len(all_pages) > _MAX_PAGES_TRANSPORT:
+        with_issues = [p for p in all_pages if p.get("issues") or p.get("status", 0) >= 400]
+        without = [p for p in all_pages if not (p.get("issues") or p.get("status", 0) >= 400)]
+        selected = (with_issues + without)[:_MAX_PAGES_TRANSPORT]
+        truncated = len(all_pages) - len(selected)
+    else:
+        selected = all_pages
+        truncated = 0
     # Allège les pages pour le transport (retire les listes de liens volumineuses)
-    light_pages = []
-    for p in report["pages"]:
-        lp = {k: v for k, v in p.items() if k not in ("internal_links", "anchors_out", "hn")}
-        light_pages.append(lp)
-    return {"summary": report["summary"], "pages": light_pages, "maillage": report["maillage"]}
+    light_pages = [
+        {k: v for k, v in p.items() if k not in ("internal_links", "anchors_out", "hn")}
+        for p in selected
+    ]
+    return {
+        "summary": report["summary"],
+        "pages": light_pages,
+        "maillage": report["maillage"],
+        "pages_truncated": truncated,
+        "pages_total": len(all_pages),
+    }
 
 
 @router.get("/page/{key}")

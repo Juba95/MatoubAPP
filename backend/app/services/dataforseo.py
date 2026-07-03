@@ -112,6 +112,51 @@ class DataForSEOClient:
                         return out
         return out
 
+    def get_domain_position(self, keyword: str, target_domain: str,
+                            location: str = "France", language: str = "fr",
+                            depth: int = 100) -> dict:
+        """Position d'un domaine dans la SERP Google pour un mot-clé (live, sans proxy).
+
+        Retourne le rang organique (1..depth) du domaine cible, l'URL classée, et
+        le top 3 concurrents. rank=None si absent du top `depth`. Légal et propre :
+        DataForSEO renvoie la SERP Google — aucun scraping ni proxy nécessaire.
+        """
+        tgt = target_domain.replace("https://", "").replace("http://", "").replace("www.", "").rstrip("/").lower()
+        with self._client() as client:
+            resp = client.post(f"{self.BASE_URL}/serp/google/organic/live/advanced", json=[{
+                "keyword": keyword,
+                "location_name": location,
+                "language_code": language,
+                "depth": depth,
+            }])
+            resp.raise_for_status()
+            data = resp.json()
+
+        rank = None
+        ranked_url = ""
+        top3: list[dict] = []
+        for task in data.get("tasks") or []:
+            for result in task.get("result") or []:
+                for item in result.get("items") or []:
+                    if item.get("type") != "organic":
+                        continue
+                    pos = item.get("rank_group") or item.get("rank_absolute")
+                    dom = (item.get("domain") or "").replace("www.", "").lower()
+                    url = item.get("url", "")
+                    if len(top3) < 3:
+                        top3.append({"position": pos, "domain": dom, "url": url})
+                    if rank is None and (dom == tgt or tgt in url.lower()):
+                        rank = pos
+                        ranked_url = url
+        return {
+            "keyword": keyword,
+            "location": location,
+            "language": language,
+            "rank": rank,
+            "url": ranked_url,
+            "top3": top3,
+        }
+
     def get_ranked_keywords(self, domain: str, location: str = "France"):
         """Mots-clés sur lesquels un domaine est positionné"""
         with self._client() as client:

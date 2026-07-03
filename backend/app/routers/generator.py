@@ -53,6 +53,8 @@ class FullInstallRequest(BaseModel):
     site_prompt: str = ""
     # Langue principale du site généré (thème, contenu, WPLANG, hreflang)
     main_language: str = "fr"
+    # Couleur principale (ex #1e6fd9) → palette dérivée automatiquement
+    primary_color: str = ""
     competitor_urls: list[str] = []
     # Web Archive
     use_webarchive: bool = False
@@ -228,6 +230,10 @@ def full_install(
         "image_count": req.image_count,
         "image_provider": "openai",
         "main_language": req.main_language,
+        "palette": (
+            __import__("app.services.colors", fromlist=["build_palette"]).build_palette(req.primary_color)
+            if req.primary_color else None
+        ),
         "competitor_urls": req.competitor_urls if req.generation_mode == "concurrent" else [],
         "eat": {
             "enabled": req.eat_enabled,
@@ -281,6 +287,48 @@ def full_install(
 
     background_tasks.add_task(run_pipeline)
     return {"message": "Pipeline started", "key": key}
+
+
+class PreviewRequest(BaseModel):
+    site_title: str = "Mon Site"
+    site_prompt: str = ""
+    main_language: str = "fr"
+    primary_color: str = ""
+    business_name: str = ""
+    business_address: str = ""
+    business_phone: str = ""
+    business_email: str = ""
+
+
+@router.post("/preview")
+def generate_preview(req: PreviewRequest):
+    """Génère une maquette HTML autonome de la page d'accueil (aperçu avant
+    installation). Ne fait AUCUN appel FTP/WP : juste un rendu Claude."""
+    from app.config import get_settings
+    from app.services.wp_generator import build_preview_html
+    from app.services.colors import build_palette
+
+    settings = get_settings()
+    if not settings.anthropic_api_key:
+        raise HTTPException(status_code=400, detail="Clé API Claude non configurée")
+
+    config = {
+        "site_name": req.site_title or "Mon Site",
+        "site_prompt": req.site_prompt,
+        "main_language": req.main_language,
+        "palette": build_palette(req.primary_color) if req.primary_color else None,
+        "eat": {
+            "name": req.business_name,
+            "address": req.business_address,
+            "phone": req.business_phone,
+            "email": req.business_email,
+        },
+    }
+    try:
+        html = build_preview_html(config, settings.anthropic_api_key)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur de génération : {e}")
+    return {"html": html}
 
 
 @router.get("/pipeline-status/{key}")
