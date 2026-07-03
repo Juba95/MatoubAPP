@@ -37,7 +37,7 @@ class GEOAnalyzer:
         self.client = httpx.Client(
             timeout=30,
             follow_redirects=True,
-            headers={"User-Agent": "MatoubeAPP-GEO/1.0"},
+            headers={"User-Agent": "JubaWorkflow-GEO/1.0"},
         )
         # DataForSEO HTTP client (separate, with auth)
         self._dfs_client = None

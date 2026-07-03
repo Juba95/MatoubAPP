@@ -21,7 +21,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 USER_AGENT = (
-    "Mozilla/5.0 (compatible; MatoubBot/1.0; +https://matoub.app) "
+    "Mozilla/5.0 (compatible; JubaWorkflowBot/1.0) "
     "SEO-Crawler"
 )
 

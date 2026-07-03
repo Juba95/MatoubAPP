@@ -169,7 +169,7 @@ def build_sitemaps_zip(site_domain: str, url_entries: list[dict]) -> bytes:
             "3. Ajoute la ligne suivante à ton robots.txt :\n"
             f"   Sitemap: {base}/sitemap-geoloc.xml\n"
             "4. urls.txt : liste brute des URLs, à coller dans l'onglet Indexation\n"
-            "   de MatoubAPP pour la soumission IndexNow et le suivi GSC.\n"
+            "   de Juba Workflow pour la soumission IndexNow et le suivi GSC.\n"
             "Les lastmod suivent les dates de publication étalées de l'export.\n"
         ))
     return buf.getvalue()

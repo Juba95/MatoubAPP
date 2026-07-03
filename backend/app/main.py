@@ -18,8 +18,8 @@ from app.routers import (
 )
 
 app = FastAPI(
-    title="MatoubeAPP",
-    description="SEO Automation Dashboard",
+    title="Juba Workflow - SEO local",
+    description="Juba Workflow — SEO local",
     version="1.0.0",
     docs_url="/docs",
     redoc_url=None,
