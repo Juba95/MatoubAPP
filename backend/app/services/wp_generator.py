@@ -1648,6 +1648,128 @@ Prompt rules:
         return logo_url
 
 
+class OpenAIImageGenerator:
+    """
+    Génère 5 à 10 images pour le site via l'API OpenAI (gpt-image-1), les
+    redimensionne pour le web (Pillow) et les uploade en FTP. Les prompts sont
+    rédigés par Claude à partir du contexte du site, avec des rôles variés
+    (hero/slider, services, ambiance) que le générateur de thème répartit
+    ensuite dans les sections via ``image_urls``.
+    """
+
+    API_URL = "https://api.openai.com/v1/images/generations"
+
+    def __init__(self, api_key: str):
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY manquante (cle « generationimage »)")
+        self.api_key = api_key
+
+    def build_prompts(self, claude_client: anthropic.Anthropic,
+                      site_prompt: str, n: int) -> list[dict]:
+        """Claude rédige n prompts d'images (JSON) avec un rôle par image."""
+        system = (
+            "Tu es directeur artistique. Tu écris des prompts pour un modèle "
+            "d'image IA afin d'illustrer un site web. Reponds UNIQUEMENT en JSON : "
+            '{"images": [{"id": "hero", "role": "hero", "orientation": "landscape", '
+            '"prompt": "photo realiste ..."}, ...]}'
+        )
+        user = (
+            f"Site : {site_prompt[:800]}\n\n"
+            f"Génère {n} prompts d'images photoréalistes, professionnelles, sans texte "
+            f"incrusté, cohérentes entre elles (même univers visuel). Rôles utiles : "
+            f"1 hero/slider (orientation landscape), plusieurs 'service' (landscape), "
+            f"1-2 'ambiance'. id court et unique. prompt en anglais, détaillé."
+        )
+        try:
+            r = claude_client.messages.create(
+                model="claude-sonnet-4-6", max_tokens=1500, system=system,
+                messages=[{"role": "user", "content": user}],
+            )
+            raw = r.content[0].text.strip()
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
+            data = json.loads(raw)
+            imgs = data.get("images", [])[:n]
+            if imgs:
+                return imgs
+        except Exception as e:
+            logger.warning("Prompts images Claude indisponibles (%s) — prompts génériques", e)
+        # Fallback : prompts génériques dérivés du site_prompt
+        return [
+            {"id": f"img{i+1}", "role": "hero" if i == 0 else "service",
+             "orientation": "landscape",
+             "prompt": f"professional photorealistic image, no text, clean modern, for: {site_prompt[:200]}"}
+            for i in range(n)
+        ]
+
+    def _generate(self, prompt: str, size: str) -> bytes:
+        import base64
+        r = httpx.post(
+            self.API_URL,
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            json={"model": "gpt-image-1", "prompt": prompt, "size": size,
+                  "output_format": "png", "quality": "high", "n": 1},
+            timeout=180,
+        )
+        if not r.is_success:
+            raise ConnectionError(f"API OpenAI images ({r.status_code}) : {r.text[:200]}")
+        data = r.json().get("data", [])
+        if not data or not data[0].get("b64_json"):
+            raise ValueError("Aucune image retournée par OpenAI")
+        return base64.b64decode(data[0]["b64_json"])
+
+    @staticmethod
+    def _resize_web(img_bytes: bytes, max_w: int = 1600) -> bytes:
+        from PIL import Image
+        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        if img.width > max_w:
+            ratio = max_w / img.width
+            img = img.resize((max_w, round(img.height * ratio)), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=82, optimize=True)
+        return buf.getvalue()
+
+    def run(self, claude_client: anthropic.Anthropic, site_prompt: str,
+            n: int = 5, ftp_cfg: dict = None, domain: str = "") -> dict:
+        """Génère n images, les uploade en FTP, retourne {id: url_publique}."""
+        n = max(1, min(int(n or 5), 10))
+        specs = self.build_prompts(claude_client, site_prompt, n)
+
+        now = datetime.now()
+        ym = f"{now.year}/{now.month:02d}"
+        remote = f"{ftp_cfg['root']}/wp-content/uploads/{ym}"
+        urls: dict[str, str] = {}
+
+        conn = _ftp_connect(ftp_cfg)
+        try:
+            for sub in ["wp-content/uploads", f"wp-content/uploads/{now.year}",
+                        f"wp-content/uploads/{ym}"]:
+                _ftp_mkd_safe(conn, f"{ftp_cfg['root']}/{sub}")
+            for i, spec in enumerate(specs):
+                img_id = spec.get("id") or f"img{i+1}"
+                orientation = spec.get("orientation", "landscape")
+                size = "1536x1024" if orientation == "landscape" else "1024x1024"
+                try:
+                    raw = self._generate(spec.get("prompt", site_prompt), size)
+                    web = self._resize_web(raw)
+                    fname = f"{_slugify_img(img_id)}-{i+1}.jpg"
+                    conn.storbinary(f"STOR {remote}/{fname}", io.BytesIO(web))
+                    urls[img_id] = f"{domain}/wp-content/uploads/{ym}/{fname}"
+                    logger.info("Image %s générée (%s) — %d Ko", img_id, size, len(web) // 1024)
+                except Exception as e:
+                    logger.warning("Image %s échouée : %s", img_id, e)
+        finally:
+            conn.quit()
+
+        logger.info("%d images générées via OpenAI", len(urls))
+        return urls
+
+
+def _slugify_img(text: str) -> str:
+    text = re.sub(r"[^a-z0-9]+", "-", (text or "img").lower())
+    return re.sub(r"-+", "-", text).strip("-") or "img"
+
+
 class LogoGenerator:
     """
     Genere un logo professionnel avec Ideogram v2 (Replicate).
@@ -2525,21 +2647,31 @@ class WPGeneratorPipeline:
                 result["errors"].append({"step": "logo", "error": str(e)})
 
         # ── Step 6b: Generate images (optionnel) ─────────────────
+        # Provider par defaut : OpenAI (cle « generationimage ») si dispo,
+        # sinon fallback Replicate/Flux. Images reparties dans le theme
+        # (slider/sections) via image_urls.
         image_urls: dict[str, str] | None = None
         if config.get("generate_images"):
             self._log("Etape 6b : Generation des images", log_callback)
             try:
-                img_gen = ImageGenerator(
-                    api_key=self.settings.replicate_api_token,
-                    model=config.get("image_model", "schnell"),
-                )
                 site_prompt = competitor_brief or config.get("site_prompt", "")
-                image_urls = img_gen.run(
-                    claude_client, site_prompt,
-                    n=config.get("image_count", 5),
-                    ftp_cfg=ftp_cfg, domain=domain,
-                )
+                n_img = config.get("image_count", 6)
+                provider = config.get("image_provider", "openai")
+                if provider == "openai" and self.settings.openai_api_key:
+                    img_gen = OpenAIImageGenerator(api_key=self.settings.openai_api_key)
+                    image_urls = img_gen.run(
+                        claude_client, site_prompt, n=n_img, ftp_cfg=ftp_cfg, domain=domain,
+                    )
+                else:
+                    img_gen = ImageGenerator(
+                        api_key=self.settings.replicate_api_token,
+                        model=config.get("image_model", "schnell"),
+                    )
+                    image_urls = img_gen.run(
+                        claude_client, site_prompt, n=n_img, ftp_cfg=ftp_cfg, domain=domain,
+                    )
                 result["image_urls"] = image_urls
+                self._log(f"{len(image_urls or {})} images generees", log_callback)
                 result["steps_completed"].append("images")
             except Exception as e:
                 logger.error("Erreur generation images : %s", e)

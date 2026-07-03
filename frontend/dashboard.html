@@ -48,6 +48,7 @@ header{display:flex;justify-content:space-between;align-items:center;margin-bott
 .log-box{background:#f5f5f7;font-family:var(--mono);font-size:12px;max-height:300px;overflow-y:auto;padding:14px;border-radius:8px;border:1px solid var(--border)}
 .log-ok{color:#2d7a3a}.log-err{color:var(--danger)}.log-win{color:var(--success)}
 .region-btn{transition:all .15s}.region-btn.on{background:rgba(108,92,231,.15);border-color:var(--accent);color:var(--accent)}
+.cr-tab.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .up{color:var(--success);font-size:11px;font-weight:600}.down{color:var(--danger);font-size:11px;font-weight:600}
 .login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;background:radial-gradient(ellipse at 50% 0%,#e8e8f0 0%,var(--bg) 70%)}
 .login-box{width:380px;padding:40px;border:1px solid var(--border)}
@@ -113,7 +114,8 @@ header{display:flex;justify-content:space-between;align-items:center;margin-bott
 <button class="tab" onclick="switchTab(2,this)">Générateur WP</button>
 <button class="tab" onclick="switchTab(3,this)">Pages Géoloc</button>
 <button class="tab" onclick="switchTab(4,this)">Indexation</button>
-<button class="tab" onclick="switchTab(5,this)">Paramètres</button>
+<button class="tab" onclick="switchTab(5,this)">Crawl &amp; Maillage</button>
+<button class="tab" onclick="switchTab(6,this)">Paramètres</button>
 </div>
 <div id="tab-0"></div>
 <div id="tab-1" class="hidden"></div>
@@ -121,6 +123,7 @@ header{display:flex;justify-content:space-between;align-items:center;margin-bott
 <div id="tab-3" class="hidden"></div>
 <div id="tab-4" class="hidden"></div>
 <div id="tab-5" class="hidden"></div>
+<div id="tab-6" class="hidden"></div>
 </div>
 </div>
 
@@ -207,13 +210,14 @@ loadOverview();
 function switchTab(n,el){
 document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
 el.classList.add('active');
-for(let i=0;i<6;i++)document.getElementById('tab-'+i).classList.toggle('hidden',i!==n);
+for(let i=0;i<7;i++)document.getElementById('tab-'+i).classList.toggle('hidden',i!==n);
 if(n===0)loadOverview();
 if(n===1)loadGEO();
 if(n===2)loadGenerator();
 if(n===3)loadGeoloc();
 if(n===4)loadIndexation();
-if(n===5)loadSettings();
+if(n===5)loadCrawl();
+if(n===6)loadSettings();
 }
 
 // OVERVIEW
@@ -1478,6 +1482,12 @@ ${chevron}
 <input id="g-logo-url" placeholder="https://monsite.fr/logo.png">
 </div>
 <div style="font-size:11px;color:var(--muted)">Le logo est automatiquement recadré et redimensionné (header, retina, favicon).</div>
+<div class="accent-title" style="margin-top:16px">Images du site</div>
+<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+<label style="margin:0;display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text)"><input type="checkbox" id="g-gen-images" style="width:auto;accent-color:var(--accent)"> Générer des images (OpenAI)</label>
+<div style="display:flex;align-items:center;gap:6px"><label style="margin:0;text-transform:none;font-size:12px;color:var(--muted)">Nombre</label><input id="g-image-count" type="number" min="3" max="10" value="6" style="width:70px"></div>
+</div>
+<div style="font-size:11px;color:var(--muted)">Images photoréalistes générées puis réparties dans le thème (slider/hero + sections), optimisées pour le web. Coût : ~0,04-0,08 $/image (API OpenAI).</div>
 </div></div>`;
 
 // Section 5 - E-E-A-T Google
@@ -1596,6 +1606,8 @@ generation_mode:genMode,
 site_prompt:document.getElementById('g-site-prompt').value.trim(),
 competitor_urls:compUrls,
 use_webarchive:document.getElementById('g-webarchive').checked,
+generate_images:document.getElementById('g-gen-images').checked,
+image_count:Number(document.getElementById('g-image-count').value)||6,
 generate_logo:document.querySelector('input[name="g-logo-mode"]:checked').value==='ai',
 logo_url:document.querySelector('input[name="g-logo-mode"]:checked').value==='url'?document.getElementById('g-logo-url').value.trim():'',
 eat_enabled:document.getElementById('g-eat-enabled').checked,
@@ -2201,6 +2213,152 @@ resEl.innerHTML=rh;
 }
 
 // SETTINGS
+// ─── CRAWL & MAILLAGE (mini Screaming Frog, gratuit) ────────────────────────
+let _crawlKey=null,_crawlPoll=null,_crawlReport=null,_crawlFilter='all';
+function loadCrawl(){
+document.getElementById('tab-5').innerHTML=`
+<div class="section-title mb-12">Crawl &amp; Maillage interne</div>
+<div class="card mb-16">
+<div class="grid2 mb-12">
+<div><label>URL du site à crawler</label><input id="cr-url" placeholder="https://monsite.fr"></div>
+<div><label>Pages max</label><input id="cr-max" type="number" min="10" max="2000" value="300"></div>
+</div>
+<div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+<label style="display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text);margin:0"><input type="checkbox" id="cr-sitemap" checked style="width:auto;accent-color:var(--accent)"> Détecter le sitemap automatiquement</label>
+<input id="cr-sitemap-url" placeholder="ou URL de sitemap précise (optionnel)" style="flex:1;min-width:220px">
+</div>
+<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+<button class="btn" onclick="startCrawl()">Lancer le crawl</button>
+<span style="font-size:11px;color:var(--muted)">100% gratuit — aucun appel IA payant.</span>
+</div>
+<div id="cr-progress" class="hidden" style="margin-top:12px">
+<div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600;margin-bottom:6px"><span id="cr-progress-label">Crawl en cours...</span><span id="cr-progress-count" style="font-family:var(--mono);color:var(--accent)">0</span></div>
+<div style="width:100%;height:8px;background:var(--card2);border-radius:4px;overflow:hidden"><div id="cr-progress-bar" style="width:0%;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .3s"></div></div>
+</div>
+<div id="cr-msg" style="margin-top:10px;font-size:12px;min-height:16px"></div>
+</div>
+<div id="cr-results"></div>`;
+}
+function crMsg(t,ok){const el=document.getElementById('cr-msg');if(el){el.style.color=ok?'var(--success)':'var(--danger)';el.textContent=t;}}
+async function startCrawl(){
+const url=document.getElementById('cr-url').value.trim();
+if(!url){crMsg('⚠️ Renseignez l\'URL du site à crawler.',false);return;}
+const body={url,max_pages:Number(document.getElementById('cr-max').value)||300,include_sitemap:document.getElementById('cr-sitemap').checked,sitemap_url:document.getElementById('cr-sitemap-url').value.trim()};
+crMsg('',true);
+const pw=document.getElementById('cr-progress');pw.classList.remove('hidden');
+document.getElementById('cr-results').innerHTML='';
+let res;
+try{res=await apiFetch('/crawl/start',{method:'POST',body:JSON.stringify(body)});}
+catch(e){pw.classList.add('hidden');crMsg('Erreur : '+e.message,false);return;}
+_crawlKey=res.key;
+if(_crawlPoll)clearInterval(_crawlPoll);
+_crawlPoll=setInterval(async()=>{
+try{
+const st=await apiFetch('/crawl/status/'+_crawlKey);
+document.getElementById('cr-progress-count').textContent=st.total?`${st.done}/${st.total}`:`${st.done}`;
+document.getElementById('cr-progress-bar').style.width=(st.total?Math.round(st.done/st.total*100):10)+'%';
+if(st.status==='error'){clearInterval(_crawlPoll);pw.classList.add('hidden');crMsg('Échec du crawl : '+(st.error||'inconnu'),false);return;}
+if(st.status==='done'){
+clearInterval(_crawlPoll);
+document.getElementById('cr-progress-bar').style.width='100%';
+document.getElementById('cr-progress-label').textContent='Terminé';
+_crawlReport=await apiFetch('/crawl/result/'+_crawlKey);
+renderCrawl();
+}
+}catch(e){clearInterval(_crawlPoll);pw.classList.add('hidden');crMsg(e.message,false);}
+},1500);
+}
+function crCard(label,val,col){return `<div style="padding:12px 8px;text-align:center;border-right:1px solid var(--border)"><div style="font-size:20px;font-weight:700;font-family:var(--mono);color:${col||'var(--text)'}">${val}</div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-top:2px">${label}</div></div>`;}
+function renderCrawl(){
+const r=_crawlReport,s=r.summary;
+let h=`<div class="card" style="padding:0;overflow:hidden;margin-bottom:16px"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr))">
+${crCard('Pages',s.total_pages)}
+${crCard('Erreurs 4xx/5xx',s.errors_4xx_5xx,s.errors_4xx_5xx?'var(--danger)':'var(--success)')}
+${crCard('Sans Title',s.missing_title,s.missing_title?'var(--warn)':'var(--success)')}
+${crCard('Sans meta desc',s.missing_desc,s.missing_desc?'var(--warn)':'var(--success)')}
+${crCard('Sans H1',s.missing_h1,s.missing_h1?'var(--warn)':'var(--success)')}
+${crCard('Title ≠ H1',s.title_h1_mismatch,s.title_h1_mismatch?'var(--warn)':'var(--success)')}
+${crCard('Quasi-doublons',s.duplicate_content,s.duplicate_content?'var(--danger)':'var(--success)')}
+${crCard('Pages ville',s.city_pages,'var(--accent)')}
+${crCard('Ville absente Title',s.city_missing_in_title,s.city_missing_in_title?'var(--warn)':'var(--success)')}
+${crCard('Orphelines',s.orphan_pages,s.orphan_pages?'var(--danger)':'var(--success)')}
+</div></div>`;
+// Barre d'actions + filtres
+h+=`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
+<button class="btn2 btn-sm cr-tab" data-f="all" onclick="crSetFilter('all')">Toutes (${s.total_pages})</button>
+<button class="btn2 btn-sm cr-tab" data-f="issues" onclick="crSetFilter('issues')">Avec problèmes (${s.pages_with_issues})</button>
+<button class="btn2 btn-sm cr-tab" data-f="errors" onclick="crSetFilter('errors')">Erreurs (${s.errors_4xx_5xx})</button>
+<button class="btn2 btn-sm cr-tab" data-f="city" onclick="crSetFilter('city')">Pages ville (${s.city_pages})</button>
+<button class="btn2 btn-sm cr-tab" data-f="maillage" onclick="crSetFilter('maillage')">Maillage interne</button>
+<button class="btn" style="margin-left:auto;background:var(--success)" onclick="downloadAuth('/crawl/download/'+_crawlKey,'crawl.xlsx')">Exporter en Excel</button>
+</div><div id="cr-view"></div>`;
+document.getElementById('cr-results').innerHTML=h;
+crSetFilter('all');
+}
+function crSetFilter(f){
+_crawlFilter=f;
+document.querySelectorAll('.cr-tab').forEach(b=>b.classList.toggle('on',b.dataset.f===f));
+if(f==='maillage'){crRenderMaillage();return;}
+const r=_crawlReport;let pages=r.pages;
+if(f==='issues')pages=pages.filter(p=>p.issues&&p.issues.length);
+else if(f==='errors')pages=pages.filter(p=>p.status>=400);
+else if(f==='city')pages=pages.filter(p=>p.city);
+let h=`<div class="card" style="padding:0;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+<thead><tr style="background:var(--card2);text-align:left">
+<th style="padding:8px">URL</th><th style="padding:8px">Code</th><th style="padding:8px">Title</th><th style="padding:8px">H1</th><th style="padding:8px">Ville</th><th style="padding:8px" title="Liens entrants internes">Inlinks</th><th style="padding:8px">Mots</th><th style="padding:8px">Sim.</th><th style="padding:8px">Problèmes</th>
+</tr></thead><tbody>`;
+pages.slice(0,500).forEach(p=>{
+const path=p.url.replace(/^https?:\/\/[^/]+/,'')||'/';
+const stCol=p.status>=400?'var(--danger)':p.status>=300?'var(--warn)':'var(--success)';
+const simCol=p.max_similarity>=90?'var(--danger)':p.max_similarity>=70?'var(--warn)':'var(--muted)';
+h+=`<tr style="border-top:1px solid var(--border)">
+<td style="padding:7px 8px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(p.url)}">${esc(path)}</td>
+<td style="padding:7px 8px;font-weight:700;color:${stCol}">${p.status}</td>
+<td style="padding:7px 8px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap${!p.title?';color:var(--danger)':''}" title="${esc(p.title||'')}">${esc(p.title||'(vide)')}</td>
+<td style="padding:7px 8px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap${!p.h1?';color:var(--danger)':''}" title="${esc(p.h1||'')}">${esc(p.h1||'(vide)')}</td>
+<td style="padding:7px 8px;color:${p.city?'var(--accent)':'var(--muted)'}">${esc(p.city||'—')}</td>
+<td style="padding:7px 8px;text-align:center;font-family:var(--mono);color:${p.inlinks?'var(--text)':'var(--danger)'}">${p.inlinks!=null?p.inlinks:'—'}</td>
+<td style="padding:7px 8px;text-align:center;font-family:var(--mono)">${p.word_count||0}</td>
+<td style="padding:7px 8px;text-align:center;font-family:var(--mono);color:${simCol}">${p.max_similarity!=null?p.max_similarity+'%':'—'}</td>
+<td style="padding:7px 8px;color:var(--warn)">${(p.issues||[]).map(esc).join(', ')}</td>
+</tr>`;
+});
+h+=`</tbody></table></div>`;
+if(pages.length>500)h+=`<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:8px">500 premières lignes affichées — export Excel pour la liste complète (${pages.length}).</div>`;
+document.getElementById('cr-view').innerHTML=h;
+}
+function crRenderMaillage(){
+const m=_crawlReport.maillage;
+let h='';
+// Suggestions
+const byPrio={Haute:[],Moyenne:[],Basse:[]};
+(m.suggestions||[]).forEach(x=>{(byPrio[x.priority]||byPrio.Basse).push(x);});
+h+=`<div class="card mb-16"><div class="accent-title">Suggestions d'ajustement du maillage (${(m.suggestions||[]).length})</div>`;
+if(!(m.suggestions||[]).length)h+=`<div style="font-size:12px;color:var(--muted)">Aucune suggestion — maillage sain.</div>`;
+['Haute','Moyenne','Basse'].forEach(pr=>{
+if(!byPrio[pr].length)return;
+const col=pr==='Haute'?'var(--danger)':pr==='Moyenne'?'var(--warn)':'var(--muted)';
+h+=`<div style="margin-top:10px;font-size:11px;font-weight:700;text-transform:uppercase;color:${col}">Priorité ${pr} (${byPrio[pr].length})</div>`;
+byPrio[pr].slice(0,25).forEach(x=>{
+const fp=x.from.replace(/^https?:\/\/[^/]+/,'')||x.from;const tp=x.to.replace(/^https?:\/\/[^/]+/,'')||x.to;
+h+=`<div style="padding:7px 0;border-bottom:1px solid var(--border);font-size:12px">
+<div><span style="color:var(--muted)">${esc(fp)}</span> → <b>${esc(tp)}</b> <span style="color:var(--accent)">ancre: « ${esc(x.anchor)} »</span></div>
+<div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(x.reason)}</div></div>`;
+});
+});
+h+=`</div>`;
+// Orphelines + top inlinks côte à côte
+h+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">`;
+h+=`<div class="card"><div class="accent-title" style="color:var(--danger)">Pages orphelines (${(m.orphans||[]).length})</div>`;
+if(!(m.orphans||[]).length)h+=`<div style="font-size:12px;color:var(--muted)">Aucune 🎉</div>`;
+(m.orphans||[]).slice(0,50).forEach(o=>{h+=`<div style="font-size:11.5px;padding:4px 0;border-bottom:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(o)}">${esc(o.replace(/^https?:\/\/[^/]+/,'')||o)}</div>`;});
+h+=`</div>`;
+h+=`<div class="card"><div class="accent-title">Pages les plus liées (inlinks)</div>`;
+(m.top_linked||[]).slice(0,15).forEach(t=>{h+=`<div style="display:flex;justify-content:space-between;gap:8px;font-size:11.5px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(t.url)}">${esc(t.url.replace(/^https?:\/\/[^/]+/,'')||t.url)}</span><b style="font-family:var(--mono);flex-shrink:0">${t.inlinks}</b></div>`;});
+h+=`</div></div>`;
+document.getElementById('cr-view').innerHTML=h;
+}
+
 function loadSettings(){
 document.getElementById('tab-5').innerHTML=`
 <div class="section-title mb-12">Paramètres</div>

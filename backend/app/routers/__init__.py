@@ -7,6 +7,7 @@ from app.routers.geoloc import router as geoloc_router
 from app.routers.keywords import router as keywords_router
 from app.routers.geo import router as geo_router
 from app.routers.indexation import router as indexation_router
+from app.routers.crawl import router as crawl_router
 
 __all__ = [
     "auth_router",
@@ -18,4 +19,5 @@ __all__ = [
     "keywords_router",
     "geo_router",
     "indexation_router",
+    "crawl_router",
 ]

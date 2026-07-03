@@ -58,6 +58,9 @@ class FullInstallRequest(BaseModel):
     # redimensionné automatiquement (header / retina / favicon)
     generate_logo: bool = False
     logo_url: str = ""
+    # Images du site : 5-10 images générées (OpenAI) et réparties dans le thème
+    generate_images: bool = False
+    image_count: int = 6
     # EAT
     eat_enabled: bool = True
     business_name: str = ""
@@ -219,6 +222,9 @@ def full_install(
         "scrape_archive": req.use_webarchive,
         "generate_logo": req.generate_logo,
         "logo_url": req.logo_url,
+        "generate_images": req.generate_images,
+        "image_count": req.image_count,
+        "image_provider": "openai",
         "competitor_urls": req.competitor_urls if req.generation_mode == "concurrent" else [],
         "eat": {
             "enabled": req.eat_enabled,

@@ -13,6 +13,7 @@ from app.routers import (
     keywords_router,
     geo_router,
     indexation_router,
+    crawl_router,
 )
 
 app = FastAPI(
@@ -42,6 +43,7 @@ app.include_router(geoloc_router)
 app.include_router(keywords_router)
 app.include_router(geo_router)
 app.include_router(indexation_router)
+app.include_router(crawl_router)
 
 
 @app.on_event("startup")
