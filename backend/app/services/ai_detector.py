@@ -64,6 +64,11 @@ AI_PHRASES_FR = [
     "quels que soient vos besoins", "dans les moindres détails",
     "vous garantit une", "des prestations de qualité", "un service de qualité",
     "un travail soigné", "un savoir-faire",
+    "reste à votre disposition", "à votre disposition", "sur mesure",
+    "haut de gamme", "d'exception", "en toute discrétion", "clé en main",
+    "au service de", "prêt à vous", "en toute simplicité", "à votre écoute",
+    "une expérience inoubliable", "un cadre idyllique", "vous accompagne",
+    "nous mettons tout en œuvre", "à chaque instant", "dans les meilleures conditions",
 ]
 
 AI_PHRASES_EN = [
@@ -89,6 +94,10 @@ AI_WORDS_FR = {
     "exceptionnel", "exceptionnelle", "remarquable", "inégalé", "inégalée",
     "impeccable", "irréprochable", "notoire", "considérable", "significatif",
     "significative", "polyvalent", "polyvalente", "efficacement", "aisément",
+    "dédié", "dédiée", "dédiés", "dédiées", "hétéroclite", "hétéroclites",
+    "prestations", "premium", "raffinement", "raffiné", "raffinée",
+    "ponctualité", "discrétion", "privatisé", "privatisée", "emblématique",
+    "emblématiques", "prestigieux", "prestigieuse", "prisé", "prisée", "prisés",
 }
 AI_WORDS_EN = {
     "crucial", "essential", "pivotal", "paramount", "plethora", "myriad",
@@ -241,6 +250,11 @@ def analyze_text(text: str, language: str = "") -> dict:
         sig("A", "Variation des longueurs de paragraphes", round(pcv, 2),
             _ramp(pcv, 0.15, 0.65, invert=True),
             "Paragraphes calibrés au mot près = gabarit de génération.")
+    commas_ps = text.count(",") / max(1, len(raw_sents))
+    if commas_ps >= 1.0:   # asymétrique : peu de virgules n'innocente pas
+        sig("A", "Virgules par phrase", round(commas_ps, 1),
+            _ramp(commas_ps, 1.1, 2.6),
+            "Les phrases-fleuves à enchaînements de virgules sont un tic de génération.")
     very_short = sum(1 for l in sent_lens if l <= 4)
     sig("A", "Phrases très courtes (≤4 mots)", very_short,
         _ramp(very_short / max(1, len(sent_lens)), 0.0, 0.12, invert=True),
@@ -262,9 +276,16 @@ def analyze_text(text: str, language: str = "") -> dict:
         _ramp(conn_ratio, 0.06, 0.30),
         "« De plus… En outre… Par ailleurs… » : le tic n°1 des LLM.")
     triples = len(re.findall(r"\b[\wà-ÿ'’-]+,\s+[\wà-ÿ'’-]+\s+(?:et|and|ou|or)\s+[\wà-ÿ'’-]+", text, re.I))
+    # variante multi-mots : « les accès réservés…, les codes de badge…, et les itinéraires… »
+    triples += len(re.findall(r",\s+[^,.;:\n]{4,60},\s+(?:et|and|ou|or)\s+", text, re.I))
     sig("B", "Règle de trois (X, Y et Z)", f"{triples} ({round(triples*per_k,1)}/1000)",
         _ramp(triples * per_k, 2.0, 12.0),
         "Les énumérations ternaires systématiques sont une signature LLM.")
+    enum_colon = len(re.findall(r"(?:[^,.\n:]{2,45},\s+){2,}[^,.\n:]{2,45}\s*:", text))
+    sig("B", "Énumération suivie de deux-points (« A, B, C : … »)",
+        f"{enum_colon} ({round(enum_colon*per_k,1)}/1000)",
+        _ramp(enum_colon * per_k, 1.0, 7.0),
+        "Lister des lieux/services puis développer après deux-points : gabarit SEO généré.")
     neg_par = len(re.findall(
         r"(?:ce n'est pas (?:seulement|juste|simplement)|not (?:just|only|merely))", low))
     sig("B", "Parallélisme négatif (« pas seulement X, mais Y »)", neg_par,
@@ -298,28 +319,62 @@ def analyze_text(text: str, language: str = "") -> dict:
     sig("C", "Tirets cadratins / incises", f"{em_dash} ({round(em_dash*per_k,1)}/1000)",
         _ramp(em_dash * per_k, 2.5, 14.0),
         "L'abus d'incises en tiret est un marqueur documenté des LLM.")
+    slogan_heads = len([ln for ln in text.split("\n")
+                        if 8 < len(ln.strip()) < 70 and not ln.strip().endswith((".", "!", "?", ":"))
+                        and re.search(r",\s*c'est\b", ln, re.I)])
+    sig("C", "Accroche « X, c'est Y » en titre", slogan_heads,
+        70.0 if slogan_heads else 0.0,
+        "« La logistique, c'est sérieux » : gabarit d'accroche des LLM.")
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    kw_inject = 0
+    if lines and 10 < len(lines[0]) < 90:
+        title_words = _WORD_RE.findall(_norm(lines[0].split("—")[0].split(":")[0]))
+        body_low = _norm("\n".join(lines[1:]))
+        for i in range(len(title_words) - 2):
+            shingle = " ".join(title_words[i:i + 3])
+            if len(shingle) >= 12 and shingle in body_low:
+                kw_inject = max(kw_inject, body_low.count(shingle))
+    if lines and 10 < len(lines[0]) < 90:
+        sig("C", "Mot-clé du titre réinjecté tel quel dans le texte", kw_inject,
+            95.0 if kw_inject >= 2 else (85.0 if kw_inject else 0.0),
+            "Recopier l'expression exacte du titre dans les phrases est la signature "
+            "du brief SEO exécuté par une IA.")
     faq = 1 if re.search(r"(?:^|\n)\s*(?:#{1,4}\s*)?(?:faq|questions fréquentes|foire aux questions|frequently asked)", low) else 0
     sig("C", "Bloc FAQ standardisé", "oui" if faq else "non", 45.0 if faq else 0.0,
         "Une FAQ n'est pas un problème en soi, mais s'ajoute aux autres gabarits.")
 
     # ───────────────── D. Spécificité & incarnation (inversés) ──────────────
-    digits = len(re.findall(r"\d", text))
-    numbers = len(re.findall(r"\b\d[\d\s,.]*(?:€|\$|%|km|kg|m²|h\b)?", text))
-    sig("D", "Densité de chiffres concrets", f"{numbers} ({round(numbers*per_k,1)}/1000)",
+    strong_nums = len(re.findall(
+        r"\d[\d\s,.]*(?:€|\$|%|km|kg|m²|h\b|min\b|kwh)|\b(?:19|20)\d{2}\b", text, re.I))
+    plain_nums = len(re.findall(r"\b\d[\d\s,.]*\b", text))
+    numbers = strong_nums + 0.5 * max(0, plain_nums - strong_nums)
+    sig("D", "Densité de chiffres concrets (prix, %, unités)",
+        f"{round(numbers,1)} ({round(numbers*per_k,1)}/1000)",
         _ramp(numbers * per_k, 2.0, 18.0, invert=True),
-        "Prix, dates, quantités : l'humain sait, l'IA reste dans le flou.")
+        "Prix, pourcentages, quantités : l'humain sait, l'IA reste dans le flou. "
+        "Les nombres sans unité comptent moitié (faciles à générer).")
     mid_caps = len(re.findall(r"(?<![.!?…]\s)(?<!^)\b[A-ZÀ-Ý][a-zà-ÿ]{2,}", text))
     sig("D", "Noms propres hors début de phrase", f"{mid_caps} ({round(mid_caps*per_k,1)}/1000)",
-        _ramp(mid_caps * per_k, 4.0, 30.0, invert=True),
-        "Marques, lieux, personnes précises = ancrage réel.")
+        _ramp(mid_caps * per_k, 10.0, 55.0, invert=True),
+        "Marques, lieux, personnes = ancrage réel — mais le simple name-dropping "
+        "de lieux est facile pour une IA bien briefée, d'où un seuil exigeant.")
     fp = sum(low.count(m) for m in first_person)
     sig("D", "Marqueurs de première personne / vécu", fp,
         _ramp(fp * per_k, 0.0, 6.0, invert=True),
         "« J'ai testé », « notre expérience » : le vécu ne s'invente pas facilement.")
+    if fp == 0:
+        corp = len(re.findall(r"\b(?:vous|vos|votre|nos|notre|you|your|our)\b", low))
+        if corp:
+            sig("D", "Voix corporate impersonnelle (« vous/nos » sans « je »)",
+                f"{corp} ({round(corp*per_k,1)}/1000)",
+                _ramp(corp * per_k, 12.0, 40.0),
+                "S'adresser au client à chaque phrase sans jamais s'impliquer : "
+                "registre type des pages de service générées.")
     dates = len(re.findall(rf"\b(?:{_MONTHS})\b|\b(?:19|20)\d{{2}}\b", low))
     sig("D", "Ancres temporelles (dates, années)", dates,
-        _ramp(dates * per_k, 0.5, 6.0, invert=True),
-        "Un contenu incarné cite des moments précis.")
+        _ramp(dates * per_k, 2.0, 14.0, invert=True),
+        "Un contenu incarné cite des moments précis (seuil exigeant : les mois "
+        "génériques sont faciles à générer).")
     vg = sum(low.count(v) for v in vague)
     sig("D", "Marqueurs de flou (« de nombreux », « divers »…)", f"{vg} ({round(vg*per_k,1)}/1000)",
         _ramp(vg * per_k, 5.0, 28.0),
@@ -372,6 +427,11 @@ def analyze_text(text: str, language: str = "") -> dict:
     sig("F", "Marqueurs d'oralité (« bref », « franchement »…)", hm,
         _ramp(hm * per_k, 0.0, 4.0, invert=True),
         "Les respirations de langage parlé manquent aux textes générés.")
+    aseptic = (hm == 0 and excl_q == 0 and fp == 0)
+    sig("F", "Zéro trace humaine (ni oralité, ni « je », ni ?/!)",
+        "oui" if aseptic else "non", 85.0 if aseptic else 0.0,
+        "Aucun marqueur d'oralité, aucune première personne, aucune question ni "
+        "exclamation : la combinaison des trois est la signature d'un texte généré.")
     parens = text.count("(")
     sig("F", "Apartés entre parenthèses", parens,
         _ramp(parens * per_k, 0.3, 5.0, invert=True),
@@ -384,12 +444,15 @@ def analyze_text(text: str, language: str = "") -> dict:
 
     # ─────────────────────── Agrégation pondérée ────────────────────────────
     weights = {"A": 20, "B": 20, "C": 13, "D": 20, "E": 15, "F": 12}
-    # Les signaux de répétition (E) n'ont de sens que sur un texte assez long :
-    # sur un texte court, un faible taux de répétition n'innocente rien.
+    # Famille E asymétrique sur texte court : une répétition FORTE reste une
+    # preuve valide quelle que soit la longueur, mais l'ABSENCE de répétition
+    # n'innocente pas un texte court (pas assez de matière statistique).
+    e_scores = [x["score"] for x in signals if x["family"] == "E"]
+    e_mean = statistics.mean(e_scores) if e_scores else 0
     if n_words < 300:
-        weights["E"] = 4
+        weights["E"] = 12 if e_mean >= 40 else 0
     elif n_words < 600:
-        weights["E"] = 9
+        weights["E"] = 12 if e_mean >= 40 else 9
     fam_names = {"A": "Rythme & variance", "B": "Lexique IA", "C": "Structure",
                  "D": "Spécificité & incarnation", "E": "Diversité & répétition",
                  "F": "Empreinte machine"}
@@ -404,6 +467,15 @@ def analyze_text(text: str, language: str = "") -> dict:
         total += fam_score * w
         wsum += w
     global_score = round(total / wsum) if wsum else 0
+
+    # Bonus de convergence : un humain n'allume pratiquement jamais 4 familles
+    # à la fois — quand plusieurs faisceaux moyens convergent, le doute tombe.
+    fam_scores = [f["score"] for f in families.values() if f["weight"] > 0]
+    strong = sum(1 for x in fam_scores if x >= 40)
+    convergence = 0
+    if strong >= 4 and max(fam_scores, default=0) >= 70:
+        convergence = 6 + (4 if strong >= 5 else 0)
+        global_score = min(100, global_score + convergence)
 
     verdict = ("Quasi certainement généré par IA" if global_score >= 72 else
                "Probablement généré par IA" if global_score >= 55 else
