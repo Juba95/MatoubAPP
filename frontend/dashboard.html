@@ -153,7 +153,8 @@ iframe{height:70vh!important}
 <button class="tab" onclick="switchTab(3,this)">Pages Géoloc</button>
 <button class="tab" onclick="switchTab(4,this)">Indexation</button>
 <button class="tab" onclick="switchTab(5,this)">Crawl &amp; Maillage</button>
-<button class="tab" onclick="switchTab(6,this)">Paramètres</button>
+<button class="tab" onclick="switchTab(6,this)">Détection IA</button>
+<button class="tab" onclick="switchTab(7,this)">Paramètres</button>
 </div>
 <div id="tab-0"></div>
 <div id="tab-1" class="hidden"></div>
@@ -162,6 +163,7 @@ iframe{height:70vh!important}
 <div id="tab-4" class="hidden"></div>
 <div id="tab-5" class="hidden"></div>
 <div id="tab-6" class="hidden"></div>
+<div id="tab-7" class="hidden"></div>
 </div>
 </div>
 
@@ -287,14 +289,15 @@ loadOverview();
 function switchTab(n,el){
 document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
 el.classList.add('active');
-for(let i=0;i<7;i++)document.getElementById('tab-'+i).classList.toggle('hidden',i!==n);
+for(let i=0;i<8;i++)document.getElementById('tab-'+i).classList.toggle('hidden',i!==n);
 if(n===0)loadOverview();
 if(n===1)loadGEO();
 if(n===2)loadGenerator();
 if(n===3)loadGeoloc();
 if(n===4)loadIndexation();
 if(n===5)loadCrawl();
-if(n===6)loadSettings();
+if(n===6)loadDetector();
+if(n===7)loadSettings();
 }
 
 // OVERVIEW
@@ -3040,8 +3043,152 @@ h+=`</div>`;
 document.getElementById('cr-view').innerHTML=h;
 }
 
-function loadSettings(){
+// ─── DÉTECTION IA (moteur stylométrique local — gratuit) ────────────────────
+let _detPoll=null;
+function loadDetector(){
 document.getElementById('tab-6').innerHTML=`
+<div class="section-title mb-12">Détection de contenu IA</div>
+<div class="card mb-16">
+<div class="accent-title">Analyseur stylométrique — ~45 signaux, 6 familles</div>
+<div style="font-size:11.5px;color:var(--muted);line-height:1.7;margin-bottom:12px">Collez un texte OU donnez une URL. Le moteur mesure ce que les détecteurs classiques ne voient pas : <b>burstiness</b> (régularité machine du rythme), <b>lexique IA</b> (clichés, connecteurs, règle de trois), <b>gabarits de structure</b>, <b>déficit de spécificité</b> (chiffres, vécu, noms propres), <b>répétitions n-grams</b> et <b>empreinte de ponctuation</b>. En mode site : détection de <b>génération de masse</b> (titres gabarits, publication en rafale, pages sans auteur). 100% local et gratuit — et le score « risque Google » est distinct du score IA, car Google ne pénalise pas l'IA mais le contenu de masse sans valeur.</div>
+<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+<label style="margin:0;display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text)"><input type="radio" name="det-mode" value="text" checked style="width:auto" onchange="detModeToggle()"> Coller du contenu</label>
+<label style="margin:0;display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text)"><input type="radio" name="det-mode" value="page" style="width:auto" onchange="detModeToggle()"> URL d'une page</label>
+<label style="margin:0;display:flex;align-items:center;gap:6px;text-transform:none;font-size:13px;color:var(--text)"><input type="radio" name="det-mode" value="site" style="width:auto" onchange="detModeToggle()"> Site entier (échantillon)</label>
+</div>
+<div id="det-text-wrap">
+<label>Contenu à analyser (minimum ~80 mots)</label>
+<textarea id="det-text" rows="9" placeholder="Collez ici l'article ou la page à analyser..."></textarea>
+</div>
+<div id="det-url-wrap" class="hidden">
+<div class="grid2">
+<div><label>URL</label><input id="det-url" placeholder="https://site-suspect.fr/article"></div>
+<div id="det-maxpages-wrap" class="hidden"><label>Pages à échantillonner</label><input id="det-maxpages" type="number" min="3" max="15" value="8"></div>
+</div>
+</div>
+<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px">
+<button class="btn" id="det-btn" onclick="detRun()">Analyser</button>
+<span style="font-size:11px;color:var(--muted)">Gratuit — aucun appel IA payant.</span>
+</div>
+<div id="det-progress" class="hidden" style="margin-top:12px">
+<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px"><span>Analyse en cours...</span><span id="det-progress-count" style="font-family:var(--mono);color:var(--accent)"></span></div>
+<div style="width:100%;height:8px;background:var(--card2);border-radius:4px;overflow:hidden"><div id="det-progress-bar" style="width:0%;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .3s"></div></div>
+</div>
+<div id="det-msg" style="margin-top:10px;font-size:12px;min-height:16px"></div>
+</div>
+<div id="det-results"></div>`;
+}
+function detModeToggle(){
+const m=document.querySelector('input[name="det-mode"]:checked').value;
+document.getElementById('det-text-wrap').classList.toggle('hidden',m!=='text');
+document.getElementById('det-url-wrap').classList.toggle('hidden',m==='text');
+document.getElementById('det-maxpages-wrap').classList.toggle('hidden',m!=='site');
+}
+function detMsg(t,ok){const el=document.getElementById('det-msg');if(el){el.style.color=ok?'var(--success)':'var(--danger)';el.textContent=t;}}
+async function detRun(){
+const mode=document.querySelector('input[name="det-mode"]:checked').value;
+const btn=document.getElementById('det-btn');
+detMsg('',true);
+document.getElementById('det-results').innerHTML='';
+if(mode==='text'){
+const text=document.getElementById('det-text').value.trim();
+if(!text){detMsg('Collez un contenu à analyser.',false);return;}
+btn.disabled=true;btn.textContent='Analyse...';
+try{
+const r=await apiFetch('/detector/text',{method:'POST',body:JSON.stringify({text})});
+detRenderText(r);
+}catch(e){detMsg(e.message,false);}
+btn.disabled=false;btn.textContent='Analyser';
+return;
+}
+const url=document.getElementById('det-url').value.trim();
+if(!url){detMsg('Renseignez une URL.',false);return;}
+btn.disabled=true;btn.textContent='Analyse...';
+const pw=document.getElementById('det-progress');pw.classList.remove('hidden');
+let res;
+try{res=await apiFetch('/detector/url',{method:'POST',body:JSON.stringify({url,mode,max_pages:Number(document.getElementById('det-maxpages').value)||8})});}
+catch(e){pw.classList.add('hidden');btn.disabled=false;btn.textContent='Analyser';detMsg(e.message,false);return;}
+if(_detPoll)clearInterval(_detPoll);
+_detPoll=setInterval(async()=>{
+try{
+const st=await apiFetch('/detector/status/'+res.key);
+document.getElementById('det-progress-count').textContent=st.total>1?`${st.done}/${st.total}`:'';
+document.getElementById('det-progress-bar').style.width=(st.total?Math.round(st.done/st.total*100):15)+'%';
+if(st.status==='done'){clearInterval(_detPoll);pw.classList.add('hidden');btn.disabled=false;btn.textContent='Analyser';
+if(mode==='site')detRenderSite(st.result);else detRenderText(st.result);}
+if(st.status==='error'){clearInterval(_detPoll);pw.classList.add('hidden');btn.disabled=false;btn.textContent='Analyser';detMsg(st.error||'Échec',false);}
+}catch(e){clearInterval(_detPoll);pw.classList.add('hidden');btn.disabled=false;btn.textContent='Analyser';detMsg(e.message,false);}
+},1500);
+}
+function detGauge(score,label,verdict,invertOk){
+const col=score>=65?'var(--danger)':score>=45?'var(--warn)':'var(--success)';
+return `<div style="text-align:center;flex:1;min-width:170px;padding:14px">
+<div style="font-size:46px;font-weight:800;font-family:var(--mono);color:${col};line-height:1">${score}<span style="font-size:17px;color:var(--muted)">/100</span></div>
+<div style="height:8px;background:var(--card2);border-radius:4px;overflow:hidden;margin:10px auto 8px;max-width:220px"><div style="width:${score}%;height:100%;background:${col}"></div></div>
+<div style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);font-weight:600">${label}</div>
+<div style="font-size:12px;font-weight:700;color:${col};margin-top:3px">${esc(verdict)}</div>
+</div>`;
+}
+function detRenderText(r){
+let h=`<div class="card mb-16" style="display:flex;flex-wrap:wrap;align-items:center">${detGauge(r.ai_score,'Score IA',r.verdict)}${detGauge(r.google_risk,'Risque Google',r.google_verdict)}
+<div style="flex:1;min-width:200px;padding:10px;font-size:11.5px;color:var(--muted)">${r.word_count} mots · ${r.sentence_count} phrases · langue ${esc((r.language||'?').toUpperCase())}${r.url?` · <span style="word-break:break-all">${esc(r.url)}</span>`:''}</div></div>`;
+// Familles
+h+=`<div class="card mb-16"><div class="accent-title">Les 6 familles de signaux</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px 22px">`;
+Object.values(r.families||{}).forEach(f=>{
+const col=f.score>=65?'var(--danger)':f.score>=45?'var(--warn)':'var(--success)';
+h+=`<div><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>${esc(f.label)} <span style="color:var(--muted);font-size:10px">(poids ${f.weight})</span></span><b style="font-family:var(--mono);color:${col}">${f.score}</b></div>
+<div style="height:6px;background:var(--card2);border-radius:3px;overflow:hidden"><div style="width:${f.score}%;height:100%;background:${col}"></div></div></div>`;
+});
+h+=`</div></div>`;
+// Preuves
+if((r.evidence||[]).length||((r.matched_phrases||[]).length)){
+h+=`<div class="card mb-16"><div class="accent-title" style="color:var(--danger)">Preuves relevées</div>`;
+if((r.matched_phrases||[]).length)h+=`<div style="font-size:11.5px;margin-bottom:8px"><span style="color:var(--muted)">Clichés IA détectés :</span> ${r.matched_phrases.map(p=>`<span style="background:var(--card2);padding:1px 7px;border-radius:8px;margin:1px;display:inline-block;color:var(--danger)">« ${esc(p)} »</span>`).join(' ')}</div>`;
+(r.evidence||[]).forEach(e=>{h+=`<div style="font-size:12px;padding:6px 0;border-bottom:1px solid var(--border);font-style:italic;color:var(--text)">« ${esc(e.sentence)} »</div>`;});
+h+=`</div>`;
+}
+// Signaux détaillés (repliable)
+h+=`<div class="card mb-16"><div class="accent-title" style="cursor:pointer" onclick="document.getElementById('det-signals').classList.toggle('hidden')">Détail des ${(r.signals||[]).length} signaux ▾</div>
+<div id="det-signals" class="hidden" style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+<thead><tr style="text-align:left;color:var(--muted)"><th style="padding:5px 8px">Signal</th><th style="padding:5px 8px">Valeur</th><th style="padding:5px 8px">Score</th><th style="padding:5px 8px">Pourquoi</th></tr></thead><tbody>`;
+(r.signals||[]).forEach(sg=>{
+const col=sg.score>=65?'var(--danger)':sg.score>=45?'var(--warn)':'var(--success)';
+h+=`<tr style="border-top:1px solid var(--border)"><td style="padding:6px 8px">${esc(sg.name)}</td><td style="padding:6px 8px;font-family:var(--mono);white-space:nowrap">${esc(String(sg.raw))}</td><td style="padding:6px 8px;font-weight:700;font-family:var(--mono);color:${col}">${sg.score}</td><td style="padding:6px 8px;color:var(--muted)">${esc(sg.why)}</td></tr>`;
+});
+h+=`</tbody></table></div></div>`;
+// Recos
+h+=`<div class="card" style="background:var(--card2)"><div class="accent-title">Recommandations</div>${(r.recommendations||[]).map(x=>`<div style="font-size:12px;padding:3px 0;line-height:1.6">• ${esc(x)}</div>`).join('')}</div>`;
+document.getElementById('det-results').innerHTML=h;
+detMsg(`✓ Analyse terminée — score IA ${r.ai_score}/100`,true);
+}
+function detRenderSite(r){
+let h=`<div class="card mb-16" style="display:flex;flex-wrap:wrap;align-items:center">${detGauge(r.ai_score,'Score IA du site',r.verdict)}${detGauge(r.google_risk,'Risque Google',r.google_verdict)}
+<div style="flex:1;min-width:200px;padding:10px;font-size:11.5px;color:var(--muted)">${r.pages_analyzed} pages analysées sur ${r.pages_discovered} découvertes<br><span style="word-break:break-all">${esc(r.url)}</span></div></div>`;
+// Signaux site
+h+=`<div class="card mb-16"><div class="accent-title">Signaux « site généré en masse »</div>`;
+(r.site_signals||[]).forEach(sg=>{
+const col=sg.score>=65?'var(--danger)':sg.score>=45?'var(--warn)':'var(--success)';
+h+=`<div style="padding:7px 0;border-bottom:1px solid var(--border);font-size:12px"><div style="display:flex;justify-content:space-between;gap:10px"><span><b>${esc(sg.name)}</b> — ${esc(String(sg.raw))}</span><b style="font-family:var(--mono);color:${col};flex-shrink:0">${sg.score}</b></div><div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(sg.why)}</div></div>`;
+});
+h+=`</div>`;
+// Pages
+h+=`<div class="card" style="padding:0;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+<thead><tr style="background:var(--card2);text-align:left"><th style="padding:8px">Page</th><th style="padding:8px">Score IA</th><th style="padding:8px">Risque</th><th style="padding:8px">Mots</th><th style="padding:8px">Famille dominante</th></tr></thead><tbody>`;
+(r.pages||[]).forEach(p=>{
+const col=p.ai_score>=65?'var(--danger)':p.ai_score>=45?'var(--warn)':'var(--success)';
+h+=`<tr style="border-top:1px solid var(--border)"><td style="padding:7px 8px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(p.url)}">${esc(p.title||p.url.replace(/^https?:\/\/[^/]+/,''))}</td>
+<td style="padding:7px 8px;font-weight:700;font-family:var(--mono);color:${col}">${p.ai_score}</td>
+<td style="padding:7px 8px;font-family:var(--mono)">${p.google_risk}</td>
+<td style="padding:7px 8px;font-family:var(--mono)">${p.word_count}</td>
+<td style="padding:7px 8px;color:var(--muted)">${esc(p.top_family||'')}</td></tr>`;
+});
+h+=`</tbody></table></div>`;
+document.getElementById('det-results').innerHTML=h;
+detMsg(`✓ Site analysé — score IA ${r.ai_score}/100`,true);
+}
+
+function loadSettings(){
+document.getElementById('tab-7').innerHTML=`
 <div class="section-title mb-12">Paramètres</div>
 <div class="card"><div class="accent-title">Configuration API</div><div style="font-size:12px;color:var(--muted);line-height:1.8">Les clés API (Claude, DataForSEO, Google OAuth) se configurent dans les variables d'environnement de Coolify.</div></div>
 <div class="card"><div class="accent-title">Compte admin</div><div style="font-size:12px;color:var(--muted)">ADMIN_EMAIL et ADMIN_PASSWORD dans Coolify.</div></div>`;
