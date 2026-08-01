@@ -148,6 +148,22 @@ _MONTHS = ("janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre
 _WORD_RE = re.compile(r"[a-zà-öø-ÿœæ0-9'’-]+", re.I)
 _SENT_SPLIT = re.compile(r"(?<=[.!?…])\s+")
 
+# Stopwords pour l'analyse de répétition (on ne signale que les mots pleins)
+_STOP_FR = set("""le la les de des du un une et en pour dans sur avec par au aux
+ce cette ces cet qui que quoi dont où est sont être avoir été plus très tout
+tous toute toutes leur leurs notre nos votre vos son sa ses mais ou donc or ni
+car ne pas nous vous ils elles je tu il elle on se comme si aussi fait faire
+deux trois entre chez vers après avant depuis pendant contre sans sous ainsi
+alors même peut peuvent dont autres autre chaque encore bien afin lors selon
+votre notre cela ceci celui celle ceux celles était vont va être aura
+sera fois lorsque quand toutes""".split())
+_STOP_EN = set("""the a an and or but of to in on for with by at from is are
+was were be been being have has had this that these those it its as not no we
+you they i he she will would can could should may might do does did more most
+very all each other any some such than then there here when where which who
+whom while about into over under out up down off just also only own same so
+too s t don now your our their his her my me us them what""".split())
+
 
 def _norm(t: str) -> str:
     return unicodedata.normalize("NFC", (t or "")).lower()
@@ -413,6 +429,131 @@ def analyze_text(text: str, language: str = "") -> dict:
             evid.append({"sentence": s[:220], "score": score})
     evid.sort(key=lambda x: -x["score"])
 
+    # ───────────── Analyse phrase par phrase (façon GPTZero) ────────────────
+    # Chaque phrase reçoit un score + la liste NOMINATIVE de ses problèmes,
+    # pour un surlignage coloré et des corrections ciblées.
+    sentence_details = []
+    for s in raw_sents[:300]:
+        sl = _norm(s)
+        reasons = []
+        s_score = 0
+        found_ph = [p for p in phrases if p in sl]
+        if found_ph:
+            reasons.append("Cliché IA : " + ", ".join(f"« {p} »" for p in found_ph[:3]))
+            s_score += 28 * len(found_ph)
+        conn = next((c for c in connectors if sl.startswith(c)), None)
+        if conn:
+            reasons.append(f"Ouvre par le connecteur « {conn} »")
+            s_score += 22
+        s_words = _WORD_RE.findall(sl)
+        aiw = [w for w in s_words if w in ai_words]
+        if aiw:
+            reasons.append("Vocabulaire IA : " + ", ".join(sorted(set(aiw))[:4]))
+            s_score += 10 * len(set(aiw))
+        vg_found = [v for v in vague if v in sl]
+        if len(vg_found) >= 2:
+            reasons.append("Flou : " + ", ".join(f"« {v} »" for v in vg_found[:3]))
+            s_score += 8 * len(vg_found)
+        if re.search(r"\b[\wà-ÿ'’-]+,\s+[\wà-ÿ'’-]+\s+(?:et|and|ou|or)\s+[\wà-ÿ'’-]+", s, re.I):
+            reasons.append("Énumération ternaire (règle de trois)")
+            s_score += 12
+        if len(s_words) >= 12 and mean_len and abs(len(s_words) - mean_len) <= 0.15 * mean_len:
+            s_score += 8   # phrase pile dans la moyenne : contribue sans être nommée
+        s_score = min(100, s_score)
+        label = "ia" if s_score >= 50 else ("suspect" if s_score >= 22 else "ok")
+        sentence_details.append({"text": s[:300], "score": s_score,
+                                 "label": label, "reasons": reasons})
+    n_ia = sum(1 for x in sentence_details if x["label"] == "ia")
+    n_susp = sum(1 for x in sentence_details if x["label"] == "suspect")
+
+    # ───────────── Rapport de correction (problèmes nommés) ─────────────────
+    stop = _STOP_FR | _STOP_EN
+    problems = []
+
+    def prob(severity, title, detail, fix, examples=None):
+        problems.append({"severity": severity, "title": title, "detail": detail,
+                         "fix": fix, "examples": examples or []})
+
+    # 1. Répétition de mots pleins (le « mot XXX répété » du rapport)
+    content = Counter(w for w in words if len(w) >= 4 and w not in stop and not w.isdigit())
+    for w, c in content.most_common(6):
+        density = c * per_k
+        if c >= 5 and density >= 7:
+            sev = "critique" if density >= 15 else "important"
+            prob(sev, f"Répétition du mot « {w} »",
+                 f"{c} occurrences ({round(density,1)} pour 1000 mots) — densité anormale.",
+                 f"Varier avec des synonymes, pronoms ou reformulations ; viser ≤ {max(2, round(4/per_k))} occurrences.")
+    # 2. 4-grams répétés (formules recopiées) — dédupliqués : deux formules qui
+    # se chevauchent (3 mots communs) appartiennent à la même phrase recopiée
+    reported_fg: list[set] = []
+    for fg, c in fg_counts.most_common(12):
+        if c < 3:
+            break
+        toks = set(fg.split())
+        if any(len(toks & r) >= 3 for r in reported_fg):
+            continue
+        reported_fg.append(toks)
+        prob("important", "Formule répétée mot pour mot",
+             f"« {fg} » revient {c} fois.",
+             "Reformuler chaque occurrence différemment.")
+        if len(reported_fg) >= 3:
+            break
+    # 3. Clichés IA
+    if phrase_count:
+        top_ph = sorted(phrase_hits, key=lambda p: -low.count(p))[:5]
+        prob("critique" if phrase_count * per_k >= 6 else "important",
+             "Expressions cliché IA",
+             f"{phrase_count} clichés détectés.",
+             "Supprimer ou remplacer par une formulation concrète et personnelle.",
+             [f"« {p} » ×{low.count(p)}" for p in top_ph])
+    # 4. Connecteurs mécaniques
+    if conn_ratio >= 0.15:
+        used = Counter(next((c for c in connectors if _norm(s).startswith(c)), "")
+                       for s in raw_sents)
+        used.pop("", None)
+        prob("important", "Connecteurs mécaniques en début de phrase",
+             f"{round(conn_ratio*100)}% des phrases ({conn_starts}/{len(raw_sents)}) "
+             "ouvrent par un connecteur logique.",
+             "En garder 1 sur 3 maximum ; attaquer les phrases directement par le sujet.",
+             [f"« {c.capitalize()} » ×{n}" for c, n in used.most_common(4)])
+    # 5. Vocabulaire IA
+    aw_counts = Counter(w for w in words if w in ai_words)
+    if aw and aw * per_k >= 8:
+        prob("important", "Vocabulaire IA emphatique",
+             f"{aw} adjectifs génériques ({round(aw*per_k,1)}/1000 mots).",
+             "Remplacer par des faits : au lieu d'« optimal », donner le chiffre qui le prouve.",
+             [f"« {w} » ×{c}" for w, c in aw_counts.most_common(5)])
+    # 6. Rythme trop régulier
+    if cv < 0.42:
+        prob("important", "Rythme de phrases trop régulier (burstiness faible)",
+             f"Variation de {round(cv,2)} (humain typique : 0,55-0,90) — phrases de "
+             f"{round(mean_len)} mots en moyenne, presque toutes semblables.",
+             "Casser le rythme : insérer des phrases de 3-5 mots. Puis une très longue, "
+             "qui déroule. Et recommencer.")
+    # 7. Déficit de concret
+    if numbers * per_k < 3:
+        prob("critique" if numbers == 0 else "important",
+             "Quasi-absence de données concrètes",
+             f"Seulement {numbers} chiffres (prix, dates, quantités) dans tout le texte.",
+             "Ajouter prix réels, délais, dates, pourcentages, références vérifiables.")
+    if fp == 0:
+        prob("mineur", "Aucune marque de vécu",
+             "Pas de première personne ni d'expérience rapportée.",
+             "Une anecdote ou un retour d'expérience crédibilise et humanise.")
+    # 8. Flou quantitatif
+    if vg * per_k >= 15:
+        vg_counts = Counter()
+        for v in vague:
+            c = low.count(v)
+            if c:
+                vg_counts[v] = c
+        prob("mineur", "Flou quantitatif",
+             f"{vg} marqueurs vagues ({round(vg*per_k,1)}/1000 mots).",
+             "Remplacer « de nombreux » par le nombre réel.",
+             [f"« {v} » ×{c}" for v, c in vg_counts.most_common(4)])
+    sev_rank = {"critique": 0, "important": 1, "mineur": 2}
+    problems.sort(key=lambda x: sev_rank[x["severity"]])
+
     recos = []
     if families.get("D", {}).get("score", 0) >= 55:
         recos.append("Injecter du concret : prix réels, dates, noms de lieux/marques, chiffres vérifiables.")
@@ -440,6 +581,10 @@ def analyze_text(text: str, language: str = "") -> dict:
         "evidence": evid[:6],
         "matched_phrases": phrase_hits[:15],
         "recommendations": recos,
+        "sentences": sentence_details,
+        "sentence_stats": {"ia": n_ia, "suspect": n_susp,
+                           "ok": len(sentence_details) - n_ia - n_susp},
+        "report": problems,
     }
 
 
